@@ -1,64 +1,94 @@
-import json
-import logging
-import os
-import shutil
-import base64
-import redis
+import json  # 导入JSON处理模块，用于配置数据的序列化和反序列化
+import logging  # 导入日志模块，用于记录应用程序运行时的日志信息
+import os  # 导入操作系统接口模块，用于处理文件路径和环境变量
+import shutil  # 导入文件操作模块，用于高级文件操作（复制、移动等）
+import base64  # 导入Base64编码解码模块，用于数据编码和解码
+import redis  # 导入Redis客户端，用于与Redis数据库交互
 
-from datetime import datetime
-from pathlib import Path
-from typing import Generic, Optional, TypeVar
-from urllib.parse import urlparse
+from datetime import datetime  # 导入日期时间处理，用于时间戳和日期操作
+from pathlib import Path  # 导入路径处理，提供面向对象的文件系统路径操作
+from typing import Generic, Optional, TypeVar  # 导入类型提示，用于泛型和类型注解
+from urllib.parse import urlparse  # 导入URL解析工具，用于解析和处理URL
 
-import requests
-from pydantic import BaseModel
-from sqlalchemy import JSON, Column, DateTime, Integer, func
+import requests  # 导入HTTP请求库，用于进行HTTP请求
+from pydantic import BaseModel  # 导入Pydantic数据验证，用于数据模型定义和验证
+from sqlalchemy import JSON, Column, DateTime, Integer, func  # 导入SQLAlchemy组件，用于ORM数据库操作
 
-from open_webui.env import (
-    DATA_DIR,
-    DATABASE_URL,
-    ENV,
-    REDIS_URL,
-    REDIS_SENTINEL_HOSTS,
-    REDIS_SENTINEL_PORT,
-    FRONTEND_BUILD_DIR,
-    OFFLINE_MODE,
-    OPEN_WEBUI_DIR,
-    WEBUI_AUTH,
-    WEBUI_FAVICON_URL,
-    WEBUI_NAME,
-    log,
+from open_webui.env import (  # 导入环境变量
+    DATA_DIR,  # 数据目录
+    DATABASE_URL,  # 数据库URL
+    ENV,  # 环境
+    REDIS_URL,  # Redis URL
+    REDIS_SENTINEL_HOSTS,  # Redis哨兵主机
+    REDIS_SENTINEL_PORT,  # Redis哨兵端口
+    FRONTEND_BUILD_DIR,  # 前端构建目录
+    OFFLINE_MODE,  # 离线模式
+    OPEN_WEBUI_DIR,  # OpenWebUI目录
+    WEBUI_AUTH,  # WebUI认证
+    WEBUI_FAVICON_URL,  # WebUI图标URL
+    WEBUI_NAME,  # WebUI名称
+    log,  # 日志对象
 )
-from open_webui.internal.db import Base, get_db
-from open_webui.utils.redis import get_redis_connection
+from open_webui.internal.db import Base, get_db  # 导入数据库基类和获取数据库会话函数
+from open_webui.utils.redis import get_redis_connection  # 导入获取Redis连接函数
 
 
 class EndpointFilter(logging.Filter):
+    """
+    日志端点过滤器，用于过滤掉特定路径的日志记录
+    
+    该过滤器用于减少日志输出量，特别是过滤掉健康检查端点(/health)的访问日志，
+    这类日志通常数量很大但信息价值较低。
+    
+    通过实现filter方法，可以根据日志记录的内容决定是否将其记录到日志文件中。
+    """
     def filter(self, record: logging.LogRecord) -> bool:
+        """
+        过滤日志记录
+        
+        Args:
+            record: 日志记录对象
+            
+        Returns:
+            布尔值，True表示保留该日志记录，False表示过滤掉
+        """
         return record.getMessage().find("/health") == -1
 
 
-# Filter out /endpoint
+# 为uvicorn访问日志添加过滤器
 logging.getLogger("uvicorn.access").addFilter(EndpointFilter())
 
 ####################################
-# Config helpers
+# 配置助手函数
 ####################################
 
 
-# Function to run the alembic migrations
+# 运行数据库迁移的函数
 def run_migrations():
+    """
+    执行数据库迁移操作
+    
+    该函数使用Alembic库来管理数据库架构的迁移。它会：
+    1. 加载Alembic配置文件
+    2. 动态设置迁移脚本的位置
+    3. 执行迁移操作，将数据库更新到最新版本('head')
+    
+    在应用程序启动时自动运行，确保数据库架构与应用程序版本兼容。
+    如果迁移过程中发生错误，会记录到日志中但不会终止应用程序。
+    """
     log.info("Running migrations")
     try:
         from alembic import command
         from alembic.config import Config
 
+        # 加载Alembic配置文件
         alembic_cfg = Config(OPEN_WEBUI_DIR / "alembic.ini")
 
-        # Set the script location dynamically
+        # 动态设置迁移脚本的位置
         migrations_path = OPEN_WEBUI_DIR / "migrations"
         alembic_cfg.set_main_option("script_location", str(migrations_path))
 
+        # 执行迁移，更新到最新版本
         command.upgrade(alembic_cfg, "head")
     except Exception as e:
         log.exception(f"Error running migrations: {e}")
@@ -68,27 +98,53 @@ run_migrations()
 
 
 class Config(Base):
-    __tablename__ = "config"
+    """
+    配置数据库模型
+    
+    该模型用于在数据库中存储和管理应用程序配置。
+    配置以JSON格式存储，允许灵活的数据结构，同时保留版本控制和时间戳。
+    """
+    __tablename__ = "config"  # 数据库表名
 
-    id = Column(Integer, primary_key=True)
-    data = Column(JSON, nullable=False)
-    version = Column(Integer, nullable=False, default=0)
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
-    updated_at = Column(DateTime, nullable=True, onupdate=func.now())
+    id = Column(Integer, primary_key=True)  # 配置记录的唯一标识符
+    data = Column(JSON, nullable=False)  # JSON格式存储的配置数据
+    version = Column(Integer, nullable=False, default=0)  # 配置版本号，用于版本控制
+    created_at = Column(DateTime, nullable=False, server_default=func.now())  # 配置创建时间
+    updated_at = Column(DateTime, nullable=True, onupdate=func.now())  # 配置最后更新时间
 
 
 def load_json_config():
+    """
+    从JSON文件加载配置数据
+    
+    从指定路径读取config.json文件并解析为Python对象。
+    用于支持从旧版本的文件配置迁移到数据库配置。
+    
+    Returns:
+        dict: 加载的配置数据
+    """
     with open(f"{DATA_DIR}/config.json", "r") as file:
         return json.load(file)
 
 
 def save_to_db(data):
+    """
+    将配置数据保存到数据库
+    
+    查找现有配置记录并更新，或创建新的配置记录。
+    更新时会自动更新时间戳。
+    
+    Args:
+        data (dict): 要保存的配置数据
+    """
     with get_db() as db:
         existing_config = db.query(Config).first()
         if not existing_config:
+            # 如果不存在配置记录，创建新记录
             new_config = Config(data=data, version=0)
             db.add(new_config)
         else:
+            # 如果存在配置记录，更新数据和时间戳
             existing_config.data = data
             existing_config.updated_at = datetime.now()
             db.add(existing_config)
@@ -96,6 +152,12 @@ def save_to_db(data):
 
 
 def reset_config():
+    """
+    重置配置数据
+    
+    删除数据库中的所有配置记录，恢复到默认状态。
+    通常用于故障排除或完全重置应用程序。
+    """
     with get_db() as db:
         db.query(Config).delete()
         db.commit()
@@ -114,15 +176,37 @@ DEFAULT_CONFIG = {
 
 
 def get_config():
+    """
+    获取当前配置数据
+    
+    从数据库获取最新的配置记录，如果不存在则返回默认配置。
+    按ID降序排序确保获取最新的配置记录。
+    
+    Returns:
+        dict: 当前配置数据或默认配置
+    """
     with get_db() as db:
         config_entry = db.query(Config).order_by(Config.id.desc()).first()
         return config_entry.data if config_entry else DEFAULT_CONFIG
 
 
+# 全局配置数据，应用启动时加载
 CONFIG_DATA = get_config()
 
 
 def get_config_value(config_path: str):
+    """
+    获取指定路径的配置值
+    
+    使用点分隔的路径字符串访问嵌套的配置值。
+    例如："ui.theme.dark"将访问CONFIG_DATA["ui"]["theme"]["dark"]
+    
+    Args:
+        config_path (str): 点分隔的配置路径
+        
+    Returns:
+        任意类型: 找到的配置值，如果路径不存在则返回None
+    """
     path_parts = config_path.split(".")
     cur_config = CONFIG_DATA
     for key in path_parts:
@@ -137,13 +221,27 @@ PERSISTENT_CONFIG_REGISTRY = []
 
 
 def save_config(config):
+    """
+    保存配置并更新全局状态
+    
+    将配置保存到数据库，更新全局CONFIG_DATA变量，
+    并触发所有已注册的PersistentConfig实例更新。
+    
+    Args:
+        config (dict): 要保存的配置数据
+        
+    Returns:
+        bool: 操作是否成功
+    """
     global CONFIG_DATA
     global PERSISTENT_CONFIG_REGISTRY
     try:
+        # 保存到数据库
         save_to_db(config)
+        # 更新全局配置数据
         CONFIG_DATA = config
 
-        # Trigger updates on all registered PersistentConfig entries
+        # 触发所有注册的PersistentConfig条目更新
         for config_item in PERSISTENT_CONFIG_REGISTRY:
             config_item.update()
     except Exception as e:
@@ -160,29 +258,82 @@ ENABLE_PERSISTENT_CONFIG = (
 
 
 class PersistentConfig(Generic[T]):
+    """
+    持久化配置类
+    
+    该类将环境变量与数据库配置结合使用，实现配置的持久化和动态更新。
+    提供了类型安全的泛型接口，确保配置值类型一致性。
+    
+    配置优先级：
+    1. 数据库配置（如果启用并存在）
+    2. 环境变量值（作为默认值）
+    
+    使用方式：
+    ```python
+    MY_CONFIG = PersistentConfig("MY_ENV_VAR", "my.config.path", env_value)
+    # 访问配置值
+    value = MY_CONFIG.value
+    ```
+    """
     def __init__(self, env_name: str, config_path: str, env_value: T):
+        """
+        初始化持久化配置
+        
+        Args:
+            env_name (str): 环境变量名称（用于日志和标识）
+            config_path (str): 配置路径（点分隔的配置键）
+            env_value (T): 环境变量值（默认值）
+        """
         self.env_name = env_name
         self.config_path = config_path
         self.env_value = env_value
         self.config_value = get_config_value(config_path)
+        
+        # 如果数据库配置存在且持久化配置已启用，使用数据库配置值
         if self.config_value is not None and ENABLE_PERSISTENT_CONFIG:
             log.info(f"'{env_name}' loaded from the latest database entry")
             self.value = self.config_value
         else:
+            # 否则使用环境变量值
             self.value = env_value
 
+        # 将实例注册到全局注册表，以便后续更新
         PERSISTENT_CONFIG_REGISTRY.append(self)
 
     def __str__(self):
+        """
+        返回配置值的字符串表示
+        
+        Returns:
+            str: 配置值的字符串表示
+        """
         return str(self.value)
 
     @property
     def __dict__(self):
+        """
+        阻止通过__dict__属性访问配置
+        
+        Raises:
+            TypeError: 当尝试访问__dict__属性时抛出
+        """
         raise TypeError(
             "PersistentConfig object cannot be converted to dict, use config_get or .value instead."
         )
 
     def __getattribute__(self, item):
+        """
+        自定义属性访问，阻止通过__dict__属性访问配置
+        
+        Args:
+            item (str): 属性名
+            
+        Returns:
+            任意类型: 属性值
+            
+        Raises:
+            TypeError: 当尝试访问__dict__属性时抛出
+        """
         if item == "__dict__":
             raise TypeError(
                 "PersistentConfig object cannot be converted to dict, use config_get or .value instead."
@@ -190,6 +341,12 @@ class PersistentConfig(Generic[T]):
         return super().__getattribute__(item)
 
     def update(self):
+        """
+        更新配置值
+        
+        从数据库获取最新的配置值并更新实例的value属性。
+        当配置在数据库中更改时由save_config函数调用。
+        """
         new_value = get_config_value(self.config_path)
         if new_value is not None:
             self.value = new_value
@@ -1434,7 +1591,7 @@ FOLLOW_UP_GENERATION_PROMPT_TEMPLATE = PersistentConfig(
 DEFAULT_FOLLOW_UP_GENERATION_PROMPT_TEMPLATE = """### Task:
 Suggest 3-5 relevant follow-up questions or prompts that the user might naturally ask next in this conversation as a **user**, based on the chat history, to help continue or deepen the discussion.
 ### Guidelines:
-- Write all follow-up questions from the user’s point of view, directed to the assistant.
+- Write all follow-up questions from the user's point of view, directed to the assistant.
 - Make questions concise, clear, and directly related to the discussed topic(s).
 - Only suggest follow-ups that make sense given the chat content and do not repeat what was already covered.
 - If the conversation is very short or not specific, suggest more general (but relevant) follow-ups the user might ask.

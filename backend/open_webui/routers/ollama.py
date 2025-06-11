@@ -1,6 +1,8 @@
 # TODO: Implement a more intelligent load balancing mechanism for distributing requests among multiple backend instances.
 # Current implementation uses a simple round-robin approach (random.choice). Consider incorporating algorithms like weighted round-robin,
 # least connections, or least response time for better resource utilization and performance optimization.
+# 待办：实现更智能的负载均衡机制，用于在多个后端实例之间分配请求。
+# 当前实现使用简单的轮询方法（random.choice）。考虑引入加权轮询、最少连接数或最短响应时间等算法，以实现更好的资源利用和性能优化。
 
 import asyncio
 import json
@@ -63,6 +65,7 @@ from open_webui.env import (
 )
 from open_webui.constants import ERROR_MESSAGES
 
+# 设置日志记录器
 log = logging.getLogger(__name__)
 log.setLevel(SRC_LOG_LEVELS["OLLAMA"])
 
@@ -75,6 +78,17 @@ log.setLevel(SRC_LOG_LEVELS["OLLAMA"])
 
 
 async def send_get_request(url, key=None, user: UserModel = None):
+    """
+    发送异步GET请求到指定URL
+    
+    参数:
+        url: 目标URL
+        key: API密钥(可选)
+        user: 用户模型对象(可选)
+        
+    返回:
+        JSON响应数据
+    """
     timeout = aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT_MODEL_LIST)
     try:
         async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
@@ -99,6 +113,7 @@ async def send_get_request(url, key=None, user: UserModel = None):
                 return await response.json()
     except Exception as e:
         # Handle connection error here
+        # 处理连接错误
         log.error(f"Connection error: {e}")
         return None
 
@@ -107,6 +122,13 @@ async def cleanup_response(
     response: Optional[aiohttp.ClientResponse],
     session: Optional[aiohttp.ClientSession],
 ):
+    """
+    清理HTTP响应和会话资源
+    
+    参数:
+        response: aiohttp客户端响应对象
+        session: aiohttp客户端会话对象
+    """
     if response:
         response.close()
     if session:
@@ -121,7 +143,24 @@ async def send_post_request(
     content_type: Optional[str] = None,
     user: UserModel = None,
 ):
-
+    """
+    发送异步POST请求到指定URL
+    
+    参数:
+        url: 目标URL
+        payload: 请求负载(字符串或字节)
+        stream: 是否以流式返回响应
+        key: API密钥(可选)
+        content_type: 内容类型(可选)
+        user: 用户模型对象(可选)
+        
+    返回:
+        如果stream=True，返回StreamingResponse对象
+        否则返回JSON响应数据
+        
+    异常:
+        HTTPException: 当请求失败时抛出
+    """
     r = None
     try:
         session = aiohttp.ClientSession(
@@ -180,17 +219,28 @@ async def send_post_request(
                 detail = f"Ollama: {e}"
 
         raise HTTPException(
-            status_code=r.status if r else 500,
+            status_code=r.status_code if r else 500,
             detail=detail if detail else "Open WebUI: Server Connection Error",
         )
 
 
 def get_api_key(idx, url, configs):
+    """
+    根据索引和URL获取API密钥
+    
+    参数:
+        idx: URL索引
+        url: 完整的URL
+        configs: 配置字典
+        
+    返回:
+        对应的API密钥
+    """
     parsed_url = urlparse(url)
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
     return configs.get(str(idx), configs.get(base_url, {})).get(
         "key", None
-    )  # Legacy support
+    )  # Legacy support 遗留支持
 
 
 ##########################################
@@ -199,16 +249,30 @@ def get_api_key(idx, url, configs):
 #
 ##########################################
 
+# 创建API路由器
 router = APIRouter()
 
 
 @router.head("/")
 @router.get("/")
 async def get_status():
+    """
+    检查Ollama API的状态
+    
+    返回:
+        包含状态信息的字典
+    """
     return {"status": True}
 
 
 class ConnectionVerificationForm(BaseModel):
+    """
+    连接验证表单模型
+    
+    属性:
+        url: Ollama服务器URL
+        key: API密钥(可选)
+    """
     url: str
     key: Optional[str] = None
 
@@ -217,6 +281,19 @@ class ConnectionVerificationForm(BaseModel):
 async def verify_connection(
     form_data: ConnectionVerificationForm, user=Depends(get_admin_user)
 ):
+    """
+    验证与Ollama服务器的连接
+    
+    参数:
+        form_data: 包含URL和密钥的表单数据
+        user: 管理员用户对象(通过依赖项注入)
+        
+    返回:
+        Ollama服务器返回的版本信息
+        
+    异常:
+        HTTPException: 当连接失败时抛出
+    """
     url = form_data.url
     key = form_data.key
 
@@ -265,6 +342,16 @@ async def verify_connection(
 
 @router.get("/config")
 async def get_config(request: Request, user=Depends(get_admin_user)):
+    """
+    获取Ollama API的配置信息
+    
+    参数:
+        request: FastAPI请求对象
+        user: 管理员用户对象(通过依赖项注入)
+        
+    返回:
+        包含Ollama API配置的字典
+    """
     return {
         "ENABLE_OLLAMA_API": request.app.state.config.ENABLE_OLLAMA_API,
         "OLLAMA_BASE_URLS": request.app.state.config.OLLAMA_BASE_URLS,
@@ -273,6 +360,14 @@ async def get_config(request: Request, user=Depends(get_admin_user)):
 
 
 class OllamaConfigForm(BaseModel):
+    """
+    Ollama配置表单模型
+    
+    属性:
+        ENABLE_OLLAMA_API: 是否启用Ollama API
+        OLLAMA_BASE_URLS: Ollama服务器URL列表
+        OLLAMA_API_CONFIGS: Ollama API配置字典
+    """
     ENABLE_OLLAMA_API: Optional[bool] = None
     OLLAMA_BASE_URLS: list[str]
     OLLAMA_API_CONFIGS: dict
@@ -282,12 +377,24 @@ class OllamaConfigForm(BaseModel):
 async def update_config(
     request: Request, form_data: OllamaConfigForm, user=Depends(get_admin_user)
 ):
+    """
+    更新Ollama API的配置
+    
+    参数:
+        request: FastAPI请求对象
+        form_data: 包含新配置的表单数据
+        user: 管理员用户对象(通过依赖项注入)
+        
+    返回:
+        包含更新后的Ollama API配置的字典
+    """
     request.app.state.config.ENABLE_OLLAMA_API = form_data.ENABLE_OLLAMA_API
 
     request.app.state.config.OLLAMA_BASE_URLS = form_data.OLLAMA_BASE_URLS
     request.app.state.config.OLLAMA_API_CONFIGS = form_data.OLLAMA_API_CONFIGS
 
     # Remove the API configs that are not in the API URLS
+    # 移除不在API URL列表中的API配置
     keys = list(map(str, range(len(request.app.state.config.OLLAMA_BASE_URLS))))
     request.app.state.config.OLLAMA_API_CONFIGS = {
         key: value
@@ -303,6 +410,15 @@ async def update_config(
 
 
 def merge_ollama_models_lists(model_lists):
+    """
+    合并来自多个Ollama服务器的模型列表
+    
+    参数:
+        model_lists: 包含多个模型列表的列表
+        
+    返回:
+        合并后的模型列表，每个模型包含其可用的服务器索引
+    """
     merged_models = {}
 
     for idx, model_list in enumerate(model_lists):
@@ -320,6 +436,18 @@ def merge_ollama_models_lists(model_lists):
 
 @cached(ttl=1)
 async def get_all_models(request: Request, user: UserModel = None):
+    """
+    获取所有可用的Ollama模型
+    
+    使用aiocache缓存装饰器，缓存时间为1秒
+    
+    参数:
+        request: FastAPI请求对象
+        user: 用户模型对象(可选)
+        
+    返回:
+        所有可用模型的列表
+    """
     log.info("get_all_models()")
     if request.app.state.config.ENABLE_OLLAMA_API:
         request_tasks = []
@@ -417,7 +545,18 @@ async def get_all_models(request: Request, user: UserModel = None):
 
 
 async def get_filtered_models(models, user):
+    """
+    根据用户访问控制过滤模型列表
+    
+    参数:
+        models: 包含模型列表的字典
+        user: 用户模型对象
+        
+    返回:
+        用户有权访问的模型列表
+    """
     # Filter models based on user access control
+    # 基于用户访问控制过滤模型
     filtered_models = []
     for model in models.get("models", []):
         model_info = Models.get_model_by_id(model["model"])
@@ -434,6 +573,17 @@ async def get_filtered_models(models, user):
 async def get_ollama_tags(
     request: Request, url_idx: Optional[int] = None, user=Depends(get_verified_user)
 ):
+    """
+    获取Ollama模型标签列表
+    
+    参数:
+        request: FastAPI请求对象
+        url_idx: Ollama服务器URL索引(可选)
+        user: 已验证的用户对象(通过依赖项注入)
+        
+    返回:
+        Ollama模型标签列表，如果未指定url_idx则返回所有服务器的合并模型列表
+    """
     models = []
 
     if url_idx is None:
@@ -491,6 +641,14 @@ async def get_ollama_tags(
 async def get_ollama_loaded_models(request: Request, user=Depends(get_admin_user)):
     """
     List models that are currently loaded into Ollama memory, and which node they are loaded on.
+    获取当前已加载到Ollama内存中的模型列表，以及它们所在的节点
+    
+    参数:
+        request: FastAPI请求对象
+        user: 管理员用户对象(通过依赖项注入)
+        
+    返回:
+        包含已加载模型列表的字典
     """
     if request.app.state.config.ENABLE_OLLAMA_API:
         request_tasks = []
@@ -552,9 +710,24 @@ async def get_ollama_loaded_models(request: Request, user=Depends(get_admin_user
 @router.get("/api/version")
 @router.get("/api/version/{url_idx}")
 async def get_ollama_versions(request: Request, url_idx: Optional[int] = None):
+    """
+    获取Ollama服务器的版本信息
+    
+    参数:
+        request: FastAPI请求对象
+        url_idx: Ollama服务器URL索引(可选)
+        
+    返回:
+        包含版本信息的字典
+        如果未指定url_idx，则返回所有启用的服务器中版本最低的那个
+        
+    异常:
+        HTTPException: 当无法连接到Ollama服务器时抛出
+    """
     if request.app.state.config.ENABLE_OLLAMA_API:
         if url_idx is None:
             # returns lowest version
+            # 返回最低版本
             request_tasks = []
 
             for idx, url in enumerate(request.app.state.config.OLLAMA_BASE_URLS):
@@ -623,6 +796,15 @@ async def get_ollama_versions(request: Request, url_idx: Optional[int] = None):
 
 
 class ModelNameForm(BaseModel):
+    """
+    模型名称表单
+    
+    用于指定模型名称的表单模型，被多个API端点使用，
+    如卸载模型、拉取模型、显示模型信息等。
+    
+    属性:
+        name: 模型名称
+    """
     name: str
 
 
@@ -632,6 +814,23 @@ async def unload_model(
     form_data: ModelNameForm,
     user=Depends(get_admin_user),
 ):
+    """
+    卸载指定的Ollama模型
+    
+    通过将模型的keep_alive设置为0来卸载模型，
+    如果模型在多个节点上可用，则会尝试在所有节点上卸载。
+    
+    参数:
+        request: FastAPI请求对象
+        form_data: 包含模型名称的表单数据
+        user: 管理员用户对象(通过依赖项注入)
+        
+    返回:
+        包含卸载状态的字典
+        
+    异常:
+        HTTPException: 当模型名称缺失、模型不存在或卸载失败时抛出
+    """
     model_name = form_data.name
     if not model_name:
         raise HTTPException(
@@ -639,10 +838,12 @@ async def unload_model(
         )
 
     # Refresh/load models if needed, get mapping from name to URLs
+    # 刷新/加载模型(如果需要)，获取从名称到URL的映射
     await get_all_models(request, user=user)
     models = request.app.state.OLLAMA_MODELS
 
     # Canonicalize model name (if not supplied with version)
+    # 规范化模型名称(如果没有提供版本)
     if ":" not in model_name:
         model_name = f"{model_name}:latest"
 
@@ -653,6 +854,7 @@ async def unload_model(
     url_indices = models[model_name]["urls"]
 
     # Send unload to ALL url_indices
+    # 向所有URL索引发送卸载请求
     results = []
     errors = []
     for idx in url_indices:
@@ -698,10 +900,23 @@ async def pull_model(
     url_idx: int = 0,
     user=Depends(get_admin_user),
 ):
+    """
+    从Ollama仓库拉取模型
+    
+    参数:
+        request: FastAPI请求对象
+        form_data: 包含模型名称的表单数据
+        url_idx: Ollama服务器URL索引(默认为0)
+        user: 管理员用户对象(通过依赖项注入)
+        
+    返回:
+        Ollama API的拉取操作响应
+    """
     url = request.app.state.config.OLLAMA_BASE_URLS[url_idx]
     log.info(f"url: {url}")
 
     # Admin should be able to pull models from any source
+    # 管理员应该能够从任何来源拉取模型
     payload = {**form_data.model_dump(exclude_none=True), "insecure": True}
 
     return await send_post_request(
@@ -713,6 +928,16 @@ async def pull_model(
 
 
 class PushModelForm(BaseModel):
+    """
+    推送模型表单
+    
+    用于将模型推送到远程仓库的表单模型
+    
+    属性:
+        name: 模型名称
+        insecure: 是否允许不安全的连接(可选)
+        stream: 是否以流式方式接收响应(可选)
+    """
     name: str
     insecure: Optional[bool] = None
     stream: Optional[bool] = None
@@ -726,6 +951,21 @@ async def push_model(
     url_idx: Optional[int] = None,
     user=Depends(get_admin_user),
 ):
+    """
+    将模型推送到远程仓库
+    
+    参数:
+        request: FastAPI请求对象
+        form_data: 包含模型名称和推送选项的表单数据
+        url_idx: Ollama服务器URL索引(可选)
+        user: 管理员用户对象(通过依赖项注入)
+        
+    返回:
+        Ollama API的推送操作响应
+        
+    异常:
+        HTTPException: 当模型不存在时抛出
+    """
     if url_idx is None:
         await get_all_models(request, user=user)
         models = request.app.state.OLLAMA_MODELS
@@ -750,6 +990,20 @@ async def push_model(
 
 
 class CreateModelForm(BaseModel):
+    """
+    创建模型表单
+    
+    用于创建新模型的表单模型
+    
+    属性:
+        model: 模型名称(可选)
+        stream: 是否以流式方式接收响应(可选)
+        path: 模型文件路径(可选)
+        
+    注意:
+        通过model_config = ConfigDict(extra="allow")允许额外的字段，
+        如Modelfile内容、标签等。
+    """
     model: Optional[str] = None
     stream: Optional[bool] = None
     path: Optional[str] = None
@@ -765,8 +1019,20 @@ async def create_model(
     url_idx: int = 0,
     user=Depends(get_admin_user),
 ):
-    log.debug(f"form_data: {form_data}")
+    """
+    创建新的Ollama模型
+    
+    参数:
+        request: FastAPI请求对象
+        form_data: 包含模型创建参数的表单数据
+        url_idx: Ollama服务器URL索引(默认为0)
+        user: 管理员用户对象(通过依赖项注入)
+        
+    返回:
+        Ollama API的创建操作响应
+    """
     url = request.app.state.config.OLLAMA_BASE_URLS[url_idx]
+    log.debug(f"url: {url}")
 
     return await send_post_request(
         url=f"{url}/api/create",
@@ -777,6 +1043,15 @@ async def create_model(
 
 
 class CopyModelForm(BaseModel):
+    """
+    复制模型表单
+    
+    用于指定源模型和目标模型名称的表单模型
+    
+    属性:
+        source: 源模型名称
+        destination: 目标模型名称
+    """
     source: str
     destination: str
 
@@ -789,6 +1064,23 @@ async def copy_model(
     url_idx: Optional[int] = None,
     user=Depends(get_admin_user),
 ):
+    """
+    复制Ollama模型
+    
+    将一个模型复制为另一个名称的模型
+    
+    参数:
+        request: FastAPI请求对象
+        form_data: 包含源模型和目标模型名称的表单数据
+        url_idx: Ollama服务器URL索引(可选)
+        user: 管理员用户对象(通过依赖项注入)
+        
+    返回:
+        成功时返回True
+        
+    异常:
+        HTTPException: 当源模型不存在或复制失败时抛出
+    """
     if url_idx is None:
         await get_all_models(request, user=user)
         models = request.app.state.OLLAMA_MODELS
@@ -854,6 +1146,21 @@ async def delete_model(
     url_idx: Optional[int] = None,
     user=Depends(get_admin_user),
 ):
+    """
+    删除Ollama模型
+    
+    参数:
+        request: FastAPI请求对象
+        form_data: 包含模型名称的表单数据
+        url_idx: Ollama服务器URL索引(可选)
+        user: 管理员用户对象(通过依赖项注入)
+        
+    返回:
+        删除成功时返回True
+        
+    异常:
+        HTTPException: 当模型不存在或删除失败时抛出
+    """
     if url_idx is None:
         await get_all_models(request, user=user)
         models = request.app.state.OLLAMA_MODELS
@@ -915,6 +1222,20 @@ async def delete_model(
 async def show_model_info(
     request: Request, form_data: ModelNameForm, user=Depends(get_verified_user)
 ):
+    """
+    获取指定模型的详细信息
+    
+    参数:
+        request: FastAPI请求对象
+        form_data: 包含模型名称的表单数据
+        user: 已验证的用户对象(通过依赖项注入)
+        
+    返回:
+        包含模型详细信息的字典
+        
+    异常:
+        HTTPException: 当模型不存在或获取信息失败时抛出
+    """
     await get_all_models(request, user=user)
     models = request.app.state.OLLAMA_MODELS
 
@@ -971,6 +1292,18 @@ async def show_model_info(
 
 
 class GenerateEmbedForm(BaseModel):
+    """
+    生成嵌入向量表单
+    
+    用于生成文本嵌入向量的表单模型
+    
+    属性:
+        model: 模型名称
+        input: 需要生成嵌入向量的文本或文本列表
+        truncate: 是否截断过长的输入(可选)
+        options: 模型选项(可选)
+        keep_alive: 模型保持活跃的时间(可选)
+    """
     model: str
     input: list[str] | str
     truncate: Optional[bool] = None
@@ -986,6 +1319,21 @@ async def embed(
     url_idx: Optional[int] = None,
     user=Depends(get_verified_user),
 ):
+    """
+    生成文本嵌入向量
+    
+    参数:
+        request: FastAPI请求对象
+        form_data: 包含模型名称和输入文本的表单数据
+        url_idx: Ollama服务器URL索引(可选)
+        user: 已验证的用户对象(通过依赖项注入)
+        
+    返回:
+        包含嵌入向量的响应
+        
+    异常:
+        HTTPException: 当模型不存在或生成失败时抛出
+    """
     log.info(f"generate_ollama_batch_embeddings {form_data}")
 
     if url_idx is None:

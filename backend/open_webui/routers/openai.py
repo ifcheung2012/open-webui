@@ -57,6 +57,17 @@ log.setLevel(SRC_LOG_LEVELS["OPENAI"])
 
 
 async def send_get_request(url, key=None, user: UserModel = None):
+    """
+    发送GET请求到OpenAI API
+    
+    参数:
+        url: 请求URL
+        key: API密钥(可选)
+        user: 用户模型对象(可选)
+        
+    返回:
+        请求的JSON响应，失败时返回None
+    """
     timeout = aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT_MODEL_LIST)
     try:
         async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
@@ -80,6 +91,7 @@ async def send_get_request(url, key=None, user: UserModel = None):
                 return await response.json()
     except Exception as e:
         # Handle connection error here
+        # 处理连接错误
         log.error(f"Connection error: {e}")
         return None
 
@@ -88,6 +100,13 @@ async def cleanup_response(
     response: Optional[aiohttp.ClientResponse],
     session: Optional[aiohttp.ClientSession],
 ):
+    """
+    清理API响应和会话资源
+    
+    参数:
+        response: aiohttp响应对象
+        session: aiohttp会话对象
+    """
     if response:
         response.close()
     if session:
@@ -96,17 +115,28 @@ async def cleanup_response(
 
 def openai_o_series_handler(payload):
     """
-    Handle "o" series specific parameters
+    处理OpenAI "o"系列模型的特定参数
+    
+    对o系列模型进行特殊处理，包括令牌限制和系统角色转换
+    
+    参数:
+        payload: 请求负载
+        
+    返回:
+        修改后的负载
     """
     if "max_tokens" in payload:
         # Convert "max_tokens" to "max_completion_tokens" for all o-series models
+        # 将"max_tokens"转换为"max_completion_tokens"(适用于所有o系列模型)
         payload["max_completion_tokens"] = payload["max_tokens"]
         del payload["max_tokens"]
 
     # Handle system role conversion based on model type
+    # 根据模型类型处理系统角色转换
     if payload["messages"][0]["role"] == "system":
         model_lower = payload["model"].lower()
         # Legacy models use "user" role instead of "system"
+        # 旧版模型使用"user"角色而不是"system"
         if model_lower.startswith("o1-mini") or model_lower.startswith("o1-preview"):
             payload["messages"][0]["role"] = "user"
         else:
@@ -126,6 +156,16 @@ router = APIRouter()
 
 @router.get("/config")
 async def get_config(request: Request, user=Depends(get_admin_user)):
+    """
+    获取OpenAI API配置
+    
+    参数:
+        request: FastAPI请求对象
+        user: 管理员用户对象(通过依赖项注入)
+        
+    返回:
+        当前的OpenAI API配置
+    """
     return {
         "ENABLE_OPENAI_API": request.app.state.config.ENABLE_OPENAI_API,
         "OPENAI_API_BASE_URLS": request.app.state.config.OPENAI_API_BASE_URLS,
@@ -135,6 +175,17 @@ async def get_config(request: Request, user=Depends(get_admin_user)):
 
 
 class OpenAIConfigForm(BaseModel):
+    """
+    OpenAI配置表单模型
+    
+    用于更新OpenAI API配置的表单模型
+    
+    属性:
+        ENABLE_OPENAI_API: 是否启用OpenAI API
+        OPENAI_API_BASE_URLS: API基础URL列表
+        OPENAI_API_KEYS: API密钥列表
+        OPENAI_API_CONFIGS: API配置字典
+    """
     ENABLE_OPENAI_API: Optional[bool] = None
     OPENAI_API_BASE_URLS: list[str]
     OPENAI_API_KEYS: list[str]
@@ -145,11 +196,23 @@ class OpenAIConfigForm(BaseModel):
 async def update_config(
     request: Request, form_data: OpenAIConfigForm, user=Depends(get_admin_user)
 ):
+    """
+    更新OpenAI API配置
+    
+    参数:
+        request: FastAPI请求对象
+        form_data: 包含新配置的表单数据
+        user: 管理员用户对象(通过依赖项注入)
+        
+    返回:
+        更新后的OpenAI API配置
+    """
     request.app.state.config.ENABLE_OPENAI_API = form_data.ENABLE_OPENAI_API
     request.app.state.config.OPENAI_API_BASE_URLS = form_data.OPENAI_API_BASE_URLS
     request.app.state.config.OPENAI_API_KEYS = form_data.OPENAI_API_KEYS
 
     # Check if API KEYS length is same than API URLS length
+    # 检查API密钥长度是否与API URL长度相同
     if len(request.app.state.config.OPENAI_API_KEYS) != len(
         request.app.state.config.OPENAI_API_BASE_URLS
     ):
@@ -170,6 +233,7 @@ async def update_config(
     request.app.state.config.OPENAI_API_CONFIGS = form_data.OPENAI_API_CONFIGS
 
     # Remove the API configs that are not in the API URLS
+    # 删除不在API URL中的API配置
     keys = list(map(str, range(len(request.app.state.config.OPENAI_API_BASE_URLS))))
     request.app.state.config.OPENAI_API_CONFIGS = {
         key: value
@@ -374,7 +438,18 @@ async def get_all_models_responses(request: Request, user: UserModel) -> list:
 
 
 async def get_filtered_models(models, user):
+    """
+    根据用户访问控制过滤模型列表
+    
+    参数:
+        models: 包含模型列表的字典
+        user: 用户模型对象
+        
+    返回:
+        用户有权访问的模型列表
+    """
     # Filter models based on user access control
+    # 基于用户访问控制过滤模型
     filtered_models = []
     for model in models.get("data", []):
         model_info = Models.get_model_by_id(model["id"])
@@ -388,6 +463,18 @@ async def get_filtered_models(models, user):
 
 @cached(ttl=1)
 async def get_all_models(request: Request, user: UserModel) -> dict[str, list]:
+    """
+    获取所有可用的OpenAI模型
+    
+    带有1秒缓存的函数，用于获取所有配置的OpenAI服务器中的可用模型
+    
+    参数:
+        request: FastAPI请求对象
+        user: 用户模型对象
+        
+    返回:
+        包含所有可用模型的字典
+    """
     log.info("get_all_models()")
 
     if not request.app.state.config.ENABLE_OPENAI_API:
@@ -396,6 +483,7 @@ async def get_all_models(request: Request, user: UserModel) -> dict[str, list]:
     responses = await get_all_models_responses(request, user=user)
 
     def extract_data(response):
+        """从响应中提取模型数据"""
         if response and "data" in response:
             return response["data"]
         if isinstance(response, list):
@@ -403,6 +491,11 @@ async def get_all_models(request: Request, user: UserModel) -> dict[str, list]:
         return None
 
     def merge_models_lists(model_lists):
+        """
+        合并来自多个服务器的模型列表
+        
+        添加额外的元数据，如索引、所有权和连接类型
+        """
         log.debug(f"merge_models_lists {model_lists}")
         merged_list = []
 
@@ -453,6 +546,23 @@ async def get_all_models(request: Request, user: UserModel) -> dict[str, list]:
 async def get_models(
     request: Request, url_idx: Optional[int] = None, user=Depends(get_verified_user)
 ):
+    """
+    获取OpenAI模型列表
+    
+    如果未指定url_idx，则返回所有服务器的模型；
+    否则，返回指定服务器的模型
+    
+    参数:
+        request: FastAPI请求对象
+        url_idx: OpenAI服务器URL索引(可选)
+        user: 已验证的用户对象(通过依赖项注入)
+        
+    返回:
+        包含模型列表的字典
+        
+    异常:
+        HTTPException: 当无法连接到服务器或服务器返回错误时抛出
+    """
     models = {
         "data": [],
     }
@@ -549,6 +659,16 @@ async def get_models(
 
 
 class ConnectionVerificationForm(BaseModel):
+    """
+    OpenAI连接验证表单
+    
+    用于验证与OpenAI API连接的表单模型
+    
+    属性:
+        url: OpenAI API基础URL
+        key: API密钥
+        config: 其他配置选项(可选)，如Azure API特定配置
+    """
     url: str
     key: str
 
@@ -559,6 +679,22 @@ class ConnectionVerificationForm(BaseModel):
 async def verify_connection(
     form_data: ConnectionVerificationForm, user=Depends(get_admin_user)
 ):
+    """
+    验证与OpenAI API的连接
+    
+    尝试使用提供的URL和密钥连接到OpenAI API，
+    支持标准OpenAI API和Azure OpenAI API
+    
+    参数:
+        form_data: 包含连接信息的表单数据
+        user: 管理员用户对象(通过依赖项注入)
+        
+    返回:
+        连接成功时返回模型列表
+        
+    异常:
+        HTTPException: 当连接失败时抛出
+    """
     url = form_data.url
     key = form_data.key
 
@@ -637,9 +773,20 @@ def convert_to_azure_payload(
     url,
     payload: dict,
 ):
+    """
+    将标准OpenAI请求负载转换为Azure OpenAI API格式
+    
+    参数:
+        url: Azure OpenAI API基础URL
+        payload: 原始请求负载
+        
+    返回:
+        转换后的URL和已过滤的负载
+    """
     model = payload.get("model", "")
 
     # Filter allowed parameters based on Azure OpenAI API
+    # 根据Azure OpenAI API过滤允许的参数
     allowed_params = {
         "messages",
         "temperature",
@@ -670,13 +817,16 @@ def convert_to_azure_payload(
     }
 
     # Special handling for o-series models
+    # 对o系列模型的特殊处理
     if model.startswith("o") and model.endswith("-mini"):
         # Convert max_tokens to max_completion_tokens for o-series models
+        # 将max_tokens转换为max_completion_tokens(用于o系列模型)
         if "max_tokens" in payload:
             payload["max_completion_tokens"] = payload["max_tokens"]
             del payload["max_tokens"]
 
         # Remove temperature if not 1 for o-series models
+        # 如果温度不是1，则移除温度参数(用于o系列模型)
         if "temperature" in payload and payload["temperature"] != 1:
             log.debug(
                 f"Removing temperature parameter for o-series model {model} as only default value (1) is supported"
@@ -684,6 +834,7 @@ def convert_to_azure_payload(
             del payload["temperature"]
 
     # Filter out unsupported parameters
+    # 过滤掉不支持的参数
     payload = {k: v for k, v in payload.items() if k in allowed_params}
 
     url = f"{url}/openai/deployments/{model}"

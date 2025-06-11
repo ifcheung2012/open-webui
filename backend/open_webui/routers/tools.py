@@ -29,6 +29,7 @@ log = logging.getLogger(__name__)
 log.setLevel(SRC_LOG_LEVELS["MAIN"])
 
 
+# 创建工具路由器
 router = APIRouter()
 
 ############################
@@ -38,11 +39,24 @@ router = APIRouter()
 
 @router.get("/", response_model=list[ToolUserResponse])
 async def get_tools(request: Request, user=Depends(get_verified_user)):
-
+    """
+    获取所有可用工具
+    
+    获取所有工具，包括本地工具和连接的工具服务器。基于用户权限过滤结果。
+    
+    参数:
+        request: FastAPI请求对象
+        user: 已验证的用户对象(通过依赖项注入)
+        
+    返回:
+        用户可访问的工具列表
+    """
     if not request.app.state.TOOL_SERVERS:
         # If the tool servers are not set, we need to set them
         # This is done only once when the server starts
         # This is done to avoid loading the tool servers every time
+        # 如果工具服务器未设置，需要进行初始化
+        # 这仅在服务器启动时完成一次，避免每次请求都重新加载工具服务器
 
         request.app.state.TOOL_SERVERS = await get_tool_servers_data(
             request.app.state.config.TOOL_SERVER_CONNECTIONS
@@ -92,6 +106,18 @@ async def get_tools(request: Request, user=Depends(get_verified_user)):
 
 @router.get("/list", response_model=list[ToolUserResponse])
 async def get_tool_list(user=Depends(get_verified_user)):
+    """
+    获取工具列表
+    
+    获取当前用户可用的工具列表。管理员可以看到所有工具，普通用户只能看到自己的工具
+    和有写入权限的工具。
+    
+    参数:
+        user: 已验证的用户对象(通过依赖项注入)
+        
+    返回:
+        用户可访问的工具列表
+    """
     if user.role == "admin":
         tools = Tools.get_tools()
     else:
@@ -105,17 +131,36 @@ async def get_tool_list(user=Depends(get_verified_user)):
 
 
 class LoadUrlForm(BaseModel):
+    """
+    加载URL表单模型
+    
+    属性:
+        url: 要加载的工具URL
+    """
     url: HttpUrl
 
 
 def github_url_to_raw_url(url: str) -> str:
+    """
+    将GitHub URL转换为原始内容URL
+    
+    将GitHub代码库的URL转换为可直接访问内容的原始URL
+    
+    参数:
+        url: GitHub代码库URL
+        
+    返回:
+        原始内容URL
+    """
     # Handle 'tree' (folder) URLs (add main.py at the end)
+    # 处理'tree'(文件夹)URL(在末尾添加main.py)
     m1 = re.match(r"https://github\.com/([^/]+)/([^/]+)/tree/([^/]+)/(.*)", url)
     if m1:
         org, repo, branch, path = m1.groups()
         return f"https://raw.githubusercontent.com/{org}/{repo}/refs/heads/{branch}/{path.rstrip('/')}/main.py"
 
     # Handle 'blob' (file) URLs
+    # 处理'blob'(文件)URL
     m2 = re.match(r"https://github\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.*)", url)
     if m2:
         org, repo, branch, path = m2.groups()
@@ -124,6 +169,7 @@ def github_url_to_raw_url(url: str) -> str:
         )
 
     # No match; return as-is
+    # 没有匹配，按原样返回
     return url
 
 
@@ -131,6 +177,24 @@ def github_url_to_raw_url(url: str) -> str:
 async def load_tool_from_url(
     request: Request, form_data: LoadUrlForm, user=Depends(get_admin_user)
 ):
+    """
+    从URL加载工具
+    
+    从指定URL加载工具代码，支持GitHub代码库URL的自动转换
+    
+    注意：此端点仅限管理员访问，用于受信任的内部使用，不接受不受信任的用户输入
+    
+    参数:
+        request: FastAPI请求对象
+        form_data: 包含URL的表单数据
+        user: 管理员用户对象(通过依赖项注入)
+        
+    返回:
+        包含工具名称和内容的字典
+        
+    异常:
+        HTTPException: 当URL无效、获取失败或处理错误时抛出
+    """
     # NOTE: This is NOT a SSRF vulnerability:
     # This endpoint is admin-only (see get_admin_user), meant for *trusted* internal use,
     # and does NOT accept untrusted user input. Access is enforced by authentication.
@@ -181,6 +245,17 @@ async def load_tool_from_url(
 
 @router.get("/export", response_model=list[ToolModel])
 async def export_tools(user=Depends(get_admin_user)):
+    """
+    导出所有工具
+    
+    获取所有工具的完整信息，用于导出或备份
+    
+    参数:
+        user: 管理员用户对象(通过依赖项注入)
+        
+    返回:
+        所有工具的完整模型列表
+    """
     tools = Tools.get_tools()
     return tools
 
@@ -196,6 +271,22 @@ async def create_new_tools(
     form_data: ToolForm,
     user=Depends(get_verified_user),
 ):
+    """
+    创建新工具
+    
+    创建新的工具，检查用户权限和工具内容有效性
+    
+    参数:
+        request: FastAPI请求对象
+        form_data: 包含工具信息的表单数据
+        user: 已验证的用户对象(通过依赖项注入)
+        
+    返回:
+        创建的工具响应对象
+        
+    异常:
+        HTTPException: 当用户没有权限、工具ID已存在或工具内容无效时抛出
+    """
     if user.role != "admin" and not has_permission(
         user.id, "workspace.tools", request.app.state.config.USER_PERMISSIONS
     ):

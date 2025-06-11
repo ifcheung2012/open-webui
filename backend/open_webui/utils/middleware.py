@@ -1,25 +1,25 @@
-import time
-import logging
-import sys
-import os
-import base64
+import time  # 导入时间模块，用于计时和延迟
+import logging  # 导入日志模块，用于应用日志记录
+import sys  # 导入系统模块，访问系统相关功能
+import os  # 导入操作系统模块，处理文件和路径
+import base64  # 导入Base64编码解码模块，用于处理图像数据
 
-import asyncio
-from aiocache import cached
-from typing import Any, Optional
-import random
-import json
-import html
-import inspect
-import re
-import ast
+import asyncio  # 导入异步IO模块，支持异步编程
+from aiocache import cached  # 导入缓存装饰器，用于缓存函数结果
+from typing import Any, Optional  # 导入类型提示，用于类型注解
+import random  # 导入随机数模块，生成随机值
+import json  # 导入JSON模块，处理JSON数据
+import html  # 导入HTML模块，处理HTML转义
+import inspect  # 导入检查模块，用于反射和函数签名分析
+import re  # 导入正则表达式模块，用于文本模式匹配
+import ast  # 导入抽象语法树模块，用于代码分析
 
-from uuid import uuid4
-from concurrent.futures import ThreadPoolExecutor
+from uuid import uuid4  # 导入UUID生成工具，创建唯一标识符
+from concurrent.futures import ThreadPoolExecutor  # 导入线程池执行器，用于并发任务
 
 
-from fastapi import Request, HTTPException
-from starlette.responses import Response, StreamingResponse
+from fastapi import Request, HTTPException  # 导入FastAPI组件，处理请求和异常
+from starlette.responses import Response, StreamingResponse  # 导入响应类，处理HTTP响应
 
 
 from open_webui.models.chats import Chats
@@ -107,37 +107,85 @@ log.setLevel(SRC_LOG_LEVELS["MAIN"])
 async def chat_completion_tools_handler(
     request: Request, body: dict, extra_params: dict, user: UserModel, models, tools
 ) -> tuple[dict, dict]:
+    """
+    处理聊天工具函数调用
+    
+    处理用户消息中可能涉及的工具函数调用，如搜索、代码执行等。
+    根据大模型的决策调用适当的工具函数，并将结果整合到响应中。
+    
+    Args:
+        request: FastAPI请求对象
+        body: 请求体，包含消息和模型信息
+        extra_params: 额外参数，包含事件调用和元数据
+        user: 用户模型对象
+        models: 可用模型列表
+        tools: 可用工具函数字典
+        
+    Returns:
+        tuple: 包含更新后的请求体和源信息的元组
+    """
     async def get_content_from_response(response) -> Optional[str]:
+        """
+        从响应中提取内容
+        
+        处理不同类型的响应（流式或非流式），提取大模型生成的内容。
+        
+        Args:
+            response: 模型响应对象，可能是流式响应或普通字典
+            
+        Returns:
+            Optional[str]: 提取的内容字符串，如果无法提取则为None
+        """
         content = None
+        # 处理流式响应
         if hasattr(response, "body_iterator"):
+            # 从流式响应中逐块读取内容
             async for chunk in response.body_iterator:
                 data = json.loads(chunk.decode("utf-8"))
                 content = data["choices"][0]["message"]["content"]
 
-            # Cleanup any remaining background tasks if necessary
+            # 如果有后台任务，确保清理
             if response.background is not None:
                 await response.background()
         else:
+            # 处理非流式响应
             content = response["choices"][0]["message"]["content"]
         return content
 
     def get_tools_function_calling_payload(messages, task_model_id, content):
+        """
+        构建工具函数调用的请求负载
+        
+        创建用于工具函数调用决策的模型请求负载，包括历史消息和系统提示。
+        
+        Args:
+            messages: 聊天历史消息列表
+            task_model_id: 用于任务处理的模型ID
+            content: 系统提示内容，通常包含工具规范
+            
+        Returns:
+            dict: 格式化的请求负载字典
+        """
+        # 获取最后一条用户消息
         user_message = get_last_user_message(messages)
+        # 构建简化的聊天历史（最近4条消息）
         history = "\n".join(
             f"{message['role'].upper()}: \"\"\"{message['content']}\"\"\""
-            for message in messages[::-1][:4]
+            for message in messages[::-1][:4]  # 逆序取最近4条
         )
 
+        # 组合历史和用户查询
         prompt = f"History:\n{history}\nQuery: {user_message}"
 
+        # 返回请求负载
         return {
-            "model": task_model_id,
+            "model": task_model_id,  # 使用任务专用模型
             "messages": [
-                {"role": "system", "content": content},
-                {"role": "user", "content": f"Query: {prompt}"},
+                {"role": "system", "content": content},  # 系统提示，包含工具规范
+                {"role": "user", "content": f"Query: {prompt}"},  # 用户查询
             ],
-            "stream": False,
-            "metadata": {"task": str(TASKS.FUNCTION_CALLING)},
+            "stream": False,  # 非流式响应
+            "metadata": {"task": str(TASKS.FUNCTION_CALLING)},  # 标记为函数调用任务
         }
 
     event_caller = extra_params["__event_call__"]

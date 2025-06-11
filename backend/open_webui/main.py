@@ -1,451 +1,451 @@
-import asyncio
-import inspect
-import json
-import logging
-import mimetypes
-import os
-import shutil
-import sys
-import time
-import random
-from uuid import uuid4
+import asyncio  # 导入异步IO库，用于处理异步操作和协程
+import inspect  # 导入inspect模块，用于检查对象属性和方法
+import json  # 导入json模块，用于JSON数据的序列化和反序列化
+import logging  # 导入日志记录模块，用于应用日志管理
+import mimetypes  # 导入mimetypes模块，用于处理文件MIME类型识别
+import os  # 导入操作系统接口模块，用于文件路径和环境变量操作
+import shutil  # 导入文件操作模块，用于高级文件操作（复制、移动等）
+import sys  # 导入系统特定参数和函数，用于访问Python解释器变量
+import time  # 导入时间处理模块，用于时间戳和延迟功能
+import random  # 导入随机数生成模块，用于生成随机值
+from uuid import uuid4  # 导入UUID生成函数，用于创建唯一标识符
 
 
-from contextlib import asynccontextmanager
-from urllib.parse import urlencode, parse_qs, urlparse
-from pydantic import BaseModel
-from sqlalchemy import text
+from contextlib import asynccontextmanager  # 导入异步上下文管理器，用于异步资源的生命周期管理
+from urllib.parse import urlencode, parse_qs, urlparse  # 导入URL解析工具，用于处理URL参数和结构
+from pydantic import BaseModel  # 导入Pydantic的基础模型类，用于数据验证和类型转换
+from sqlalchemy import text  # 导入SQLAlchemy的text函数，用于执行原始SQL查询
 
-from typing import Optional
-from aiocache import cached
-import aiohttp
-import anyio.to_thread
-import requests
-from redis import Redis
+from typing import Optional  # 导入Optional类型，用于表示可为None的类型注解
+from aiocache import cached  # 导入缓存装饰器，用于实现异步函数结果缓存
+import aiohttp  # 导入异步HTTP客户端，用于非阻塞HTTP请求
+import anyio.to_thread  # 导入线程工具，用于在线程池中运行同步代码
+import requests  # 导入HTTP请求库，用于同步HTTP请求
+from redis import Redis  # 导入Redis客户端，用于Redis数据库交互
 
 
-from fastapi import (
-    Depends,
-    FastAPI,
-    File,
-    Form,
-    HTTPException,
-    Request,
-    UploadFile,
-    status,
-    applications,
-    BackgroundTasks,
+from fastapi import (  # 导入FastAPI框架相关组件
+    Depends,  # 用于依赖注入，管理请求处理函数的依赖项
+    FastAPI,  # FastAPI应用类，用于创建Web API应用程序
+    File,  # 用于处理文件上传，支持文件上传表单字段
+    Form,  # 用于处理表单数据，支持HTML表单提交
+    HTTPException,  # HTTP异常处理，用于返回HTTP错误响应
+    Request,  # 请求对象，表示客户端的HTTP请求
+    UploadFile,  # 文件上传处理，提供上传文件的高级接口
+    status,  # HTTP状态码常量，用于指定响应状态
+    applications,  # FastAPI应用工具，提供应用程序级别的功能
+    BackgroundTasks,  # 后台任务处理，用于异步执行非阻塞任务
 )
 
-from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.openapi.docs import get_swagger_ui_html  # 导入Swagger UI HTML生成工具
 
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware  # 导入CORS中间件
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse  # 导入各种响应类型
+from fastapi.staticfiles import StaticFiles  # 导入静态文件处理
 
-from starlette_compress import CompressMiddleware
+from starlette_compress import CompressMiddleware  # 导入压缩中间件
 
-from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.middleware.sessions import SessionMiddleware
-from starlette.responses import Response, StreamingResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException  # 导入Starlette HTTP异常
+from starlette.middleware.base import BaseHTTPMiddleware  # 导入基础HTTP中间件
+from starlette.middleware.sessions import SessionMiddleware  # 导入会话中间件
+from starlette.responses import Response, StreamingResponse  # 导入响应类型
 
 
-from open_webui.utils import logger
-from open_webui.utils.audit import AuditLevel, AuditLoggingMiddleware
-from open_webui.utils.logger import start_logger
-from open_webui.socket.main import (
-    app as socket_app,
-    periodic_usage_pool_cleanup,
+from open_webui.utils import logger  # 导入日志工具
+from open_webui.utils.audit import AuditLevel, AuditLoggingMiddleware  # 导入审计日志中间件
+from open_webui.utils.logger import start_logger  # 导入日志启动函数
+from open_webui.socket.main import (  # 导入WebSocket相关功能
+    app as socket_app,  # WebSocket应用
+    periodic_usage_pool_cleanup,  # 定期清理使用池
 )
-from open_webui.routers import (
-    audio,
-    images,
-    ollama,
-    openai,
-    retrieval,
-    pipelines,
-    tasks,
-    auths,
-    channels,
-    chats,
-    notes,
-    folders,
-    configs,
-    groups,
-    files,
-    functions,
-    memories,
-    models,
-    knowledge,
-    prompts,
-    evaluations,
-    tools,
-    users,
-    utils,
-)
-
-from open_webui.routers.retrieval import (
-    get_embedding_function,
-    get_ef,
-    get_rf,
+from open_webui.routers import (  # 导入各种路由模块
+    audio,  # 音频处理路由
+    images,  # 图像处理路由
+    ollama,  # Ollama API路由
+    openai,  # OpenAI API路由
+    retrieval,  # 检索功能路由
+    pipelines,  # 管道处理路由
+    tasks,  # 任务管理路由
+    auths,  # 认证路由
+    channels,  # 频道管理路由
+    chats,  # 聊天功能路由
+    notes,  # 笔记功能路由
+    folders,  # 文件夹管理路由
+    configs,  # 配置管理路由
+    groups,  # 分组管理路由
+    files,  # 文件管理路由
+    functions,  # 函数管理路由
+    memories,  # 记忆功能路由
+    models,  # 模型管理路由
+    knowledge,  # 知识库管理路由
+    prompts,  # 提示词管理路由
+    evaluations,  # 评估功能路由
+    tools,  # 工具管理路由
+    users,  # 用户管理路由
+    utils,  # 工具函数路由
 )
 
-from open_webui.internal.db import Session, engine
+from open_webui.routers.retrieval import (  # 导入检索相关功能
+    get_embedding_function,  # 获取嵌入函数
+    get_ef,  # 获取嵌入功能
+    get_rf,  # 获取检索功能
+)
 
-from open_webui.models.functions import Functions
-from open_webui.models.models import Models
-from open_webui.models.users import UserModel, Users
-from open_webui.models.chats import Chats
+from open_webui.internal.db import Session, engine  # 导入数据库会话和引擎
 
-from open_webui.config import (
-    LICENSE_KEY,
+from open_webui.models.functions import Functions  # 导入函数模型
+from open_webui.models.models import Models  # 导入模型定义
+from open_webui.models.users import UserModel, Users  # 导入用户模型
+from open_webui.models.chats import Chats  # 导入聊天模型
+
+from open_webui.config import (  # 导入配置参数
+    LICENSE_KEY,  # 许可证密钥
     # Ollama
-    ENABLE_OLLAMA_API,
-    OLLAMA_BASE_URLS,
-    OLLAMA_API_CONFIGS,
+    ENABLE_OLLAMA_API,  # 是否启用Ollama API
+    OLLAMA_BASE_URLS,  # Ollama基础URL列表
+    OLLAMA_API_CONFIGS,  # Ollama API配置
     # OpenAI
-    ENABLE_OPENAI_API,
-    ONEDRIVE_CLIENT_ID,
-    ONEDRIVE_SHAREPOINT_URL,
-    ONEDRIVE_SHAREPOINT_TENANT_ID,
-    OPENAI_API_BASE_URLS,
-    OPENAI_API_KEYS,
-    OPENAI_API_CONFIGS,
+    ENABLE_OPENAI_API,  # 是否启用OpenAI API
+    ONEDRIVE_CLIENT_ID,  # OneDrive客户端ID
+    ONEDRIVE_SHAREPOINT_URL,  # OneDrive SharePoint URL
+    ONEDRIVE_SHAREPOINT_TENANT_ID,  # OneDrive SharePoint租户ID
+    OPENAI_API_BASE_URLS,  # OpenAI API基础URL列表
+    OPENAI_API_KEYS,  # OpenAI API密钥列表
+    OPENAI_API_CONFIGS,  # OpenAI API配置
     # Direct Connections
-    ENABLE_DIRECT_CONNECTIONS,
+    ENABLE_DIRECT_CONNECTIONS,  # 是否启用直接连接
     # Thread pool size for FastAPI/AnyIO
-    THREAD_POOL_SIZE,
+    THREAD_POOL_SIZE,  # 线程池大小
     # Tool Server Configs
-    TOOL_SERVER_CONNECTIONS,
+    TOOL_SERVER_CONNECTIONS,  # 工具服务器连接配置
     # Code Execution
-    ENABLE_CODE_EXECUTION,
-    CODE_EXECUTION_ENGINE,
-    CODE_EXECUTION_JUPYTER_URL,
-    CODE_EXECUTION_JUPYTER_AUTH,
-    CODE_EXECUTION_JUPYTER_AUTH_TOKEN,
-    CODE_EXECUTION_JUPYTER_AUTH_PASSWORD,
-    CODE_EXECUTION_JUPYTER_TIMEOUT,
-    ENABLE_CODE_INTERPRETER,
-    CODE_INTERPRETER_ENGINE,
-    CODE_INTERPRETER_PROMPT_TEMPLATE,
-    CODE_INTERPRETER_JUPYTER_URL,
-    CODE_INTERPRETER_JUPYTER_AUTH,
-    CODE_INTERPRETER_JUPYTER_AUTH_TOKEN,
-    CODE_INTERPRETER_JUPYTER_AUTH_PASSWORD,
-    CODE_INTERPRETER_JUPYTER_TIMEOUT,
+    ENABLE_CODE_EXECUTION,  # 是否启用代码执行
+    CODE_EXECUTION_ENGINE,  # 代码执行引擎
+    CODE_EXECUTION_JUPYTER_URL,  # Jupyter代码执行URL
+    CODE_EXECUTION_JUPYTER_AUTH,  # Jupyter代码执行认证
+    CODE_EXECUTION_JUPYTER_AUTH_TOKEN,  # Jupyter代码执行认证令牌
+    CODE_EXECUTION_JUPYTER_AUTH_PASSWORD,  # Jupyter代码执行认证密码
+    CODE_EXECUTION_JUPYTER_TIMEOUT,  # Jupyter代码执行超时
+    ENABLE_CODE_INTERPRETER,  # 是否启用代码解释器
+    CODE_INTERPRETER_ENGINE,  # 代码解释器引擎
+    CODE_INTERPRETER_PROMPT_TEMPLATE,  # 代码解释器提示模板
+    CODE_INTERPRETER_JUPYTER_URL,  # 代码解释器Jupyter URL
+    CODE_INTERPRETER_JUPYTER_AUTH,  # 代码解释器Jupyter认证
+    CODE_INTERPRETER_JUPYTER_AUTH_TOKEN,  # 代码解释器Jupyter认证令牌
+    CODE_INTERPRETER_JUPYTER_AUTH_PASSWORD,  # 代码解释器Jupyter认证密码
+    CODE_INTERPRETER_JUPYTER_TIMEOUT,  # 代码解释器Jupyter超时
     # Image
-    AUTOMATIC1111_API_AUTH,
-    AUTOMATIC1111_BASE_URL,
-    AUTOMATIC1111_CFG_SCALE,
-    AUTOMATIC1111_SAMPLER,
-    AUTOMATIC1111_SCHEDULER,
-    COMFYUI_BASE_URL,
-    COMFYUI_API_KEY,
-    COMFYUI_WORKFLOW,
-    COMFYUI_WORKFLOW_NODES,
-    ENABLE_IMAGE_GENERATION,
-    ENABLE_IMAGE_PROMPT_GENERATION,
-    IMAGE_GENERATION_ENGINE,
-    IMAGE_GENERATION_MODEL,
-    IMAGE_SIZE,
-    IMAGE_STEPS,
-    IMAGES_OPENAI_API_BASE_URL,
-    IMAGES_OPENAI_API_KEY,
-    IMAGES_GEMINI_API_BASE_URL,
-    IMAGES_GEMINI_API_KEY,
+    AUTOMATIC1111_API_AUTH,  # Automatic1111 API认证
+    AUTOMATIC1111_BASE_URL,  # Automatic1111基础URL
+    AUTOMATIC1111_CFG_SCALE,  # Automatic1111配置缩放
+    AUTOMATIC1111_SAMPLER,  # Automatic1111采样器
+    AUTOMATIC1111_SCHEDULER,  # Automatic1111调度器
+    COMFYUI_BASE_URL,  # ComfyUI基础URL
+    COMFYUI_API_KEY,  # ComfyUI API密钥
+    COMFYUI_WORKFLOW,  # ComfyUI工作流
+    COMFYUI_WORKFLOW_NODES,  # ComfyUI工作流节点
+    ENABLE_IMAGE_GENERATION,  # 是否启用图像生成
+    ENABLE_IMAGE_PROMPT_GENERATION,  # 是否启用图像提示生成
+    IMAGE_GENERATION_ENGINE,  # 图像生成引擎
+    IMAGE_GENERATION_MODEL,  # 图像生成模型
+    IMAGE_SIZE,  # 图像大小
+    IMAGE_STEPS,  # 图像步数
+    IMAGES_OPENAI_API_BASE_URL,  # 图像OpenAI API基础URL
+    IMAGES_OPENAI_API_KEY,  # 图像OpenAI API密钥
+    IMAGES_GEMINI_API_BASE_URL,  # 图像Gemini API基础URL
+    IMAGES_GEMINI_API_KEY,  # 图像Gemini API密钥
     # Audio
-    AUDIO_STT_ENGINE,
-    AUDIO_STT_MODEL,
-    AUDIO_STT_OPENAI_API_BASE_URL,
-    AUDIO_STT_OPENAI_API_KEY,
-    AUDIO_STT_AZURE_API_KEY,
-    AUDIO_STT_AZURE_REGION,
-    AUDIO_STT_AZURE_LOCALES,
-    AUDIO_STT_AZURE_BASE_URL,
-    AUDIO_STT_AZURE_MAX_SPEAKERS,
-    AUDIO_TTS_API_KEY,
-    AUDIO_TTS_ENGINE,
-    AUDIO_TTS_MODEL,
-    AUDIO_TTS_OPENAI_API_BASE_URL,
-    AUDIO_TTS_OPENAI_API_KEY,
-    AUDIO_TTS_SPLIT_ON,
-    AUDIO_TTS_VOICE,
-    AUDIO_TTS_AZURE_SPEECH_REGION,
-    AUDIO_TTS_AZURE_SPEECH_BASE_URL,
-    AUDIO_TTS_AZURE_SPEECH_OUTPUT_FORMAT,
-    PLAYWRIGHT_WS_URL,
-    PLAYWRIGHT_TIMEOUT,
-    FIRECRAWL_API_BASE_URL,
-    FIRECRAWL_API_KEY,
-    WEB_LOADER_ENGINE,
-    WHISPER_MODEL,
-    WHISPER_VAD_FILTER,
-    WHISPER_LANGUAGE,
-    DEEPGRAM_API_KEY,
-    WHISPER_MODEL_AUTO_UPDATE,
-    WHISPER_MODEL_DIR,
+    AUDIO_STT_ENGINE,  # 音频语音转文字引擎
+    AUDIO_STT_MODEL,  # 音频语音转文字模型
+    AUDIO_STT_OPENAI_API_BASE_URL,  # 音频语音转文字OpenAI API基础URL
+    AUDIO_STT_OPENAI_API_KEY,  # 音频语音转文字OpenAI API密钥
+    AUDIO_STT_AZURE_API_KEY,  # 音频语音转文字Azure API密钥
+    AUDIO_STT_AZURE_REGION,  # 音频语音转文字Azure地区
+    AUDIO_STT_AZURE_LOCALES,  # 音频语音转文字Azure语言区域
+    AUDIO_STT_AZURE_BASE_URL,  # 音频语音转文字Azure基础URL
+    AUDIO_STT_AZURE_MAX_SPEAKERS,  # 音频语音转文字Azure最大说话人数
+    AUDIO_TTS_API_KEY,  # 音频文字转语音API密钥
+    AUDIO_TTS_ENGINE,  # 音频文字转语音引擎
+    AUDIO_TTS_MODEL,  # 音频文字转语音模型
+    AUDIO_TTS_OPENAI_API_BASE_URL,  # 音频文字转语音OpenAI API基础URL
+    AUDIO_TTS_OPENAI_API_KEY,  # 音频文字转语音OpenAI API密钥
+    AUDIO_TTS_SPLIT_ON,  # 音频文字转语音分割标记
+    AUDIO_TTS_VOICE,  # 音频文字转语音语音
+    AUDIO_TTS_AZURE_SPEECH_REGION,  # 音频文字转语音Azure语音区域
+    AUDIO_TTS_AZURE_SPEECH_BASE_URL,  # 音频文字转语音Azure语音基础URL
+    AUDIO_TTS_AZURE_SPEECH_OUTPUT_FORMAT,  # 音频文字转语音Azure输出格式
+    PLAYWRIGHT_WS_URL,  # Playwright WebSocket URL
+    PLAYWRIGHT_TIMEOUT,  # Playwright超时设置
+    FIRECRAWL_API_BASE_URL,  # Firecrawl API基础URL
+    FIRECRAWL_API_KEY,  # Firecrawl API密钥
+    WEB_LOADER_ENGINE,  # Web加载器引擎
+    WHISPER_MODEL,  # Whisper模型
+    WHISPER_VAD_FILTER,  # Whisper VAD过滤器
+    WHISPER_LANGUAGE,  # Whisper语言
+    DEEPGRAM_API_KEY,  # Deepgram API密钥
+    WHISPER_MODEL_AUTO_UPDATE,  # Whisper模型自动更新
+    WHISPER_MODEL_DIR,  # Whisper模型目录
     # Retrieval
-    RAG_TEMPLATE,
-    DEFAULT_RAG_TEMPLATE,
-    RAG_FULL_CONTEXT,
-    BYPASS_EMBEDDING_AND_RETRIEVAL,
-    RAG_EMBEDDING_MODEL,
-    RAG_EMBEDDING_MODEL_AUTO_UPDATE,
-    RAG_EMBEDDING_MODEL_TRUST_REMOTE_CODE,
-    RAG_RERANKING_ENGINE,
-    RAG_RERANKING_MODEL,
-    RAG_EXTERNAL_RERANKER_URL,
-    RAG_EXTERNAL_RERANKER_API_KEY,
-    RAG_RERANKING_MODEL_AUTO_UPDATE,
-    RAG_RERANKING_MODEL_TRUST_REMOTE_CODE,
-    RAG_EMBEDDING_ENGINE,
-    RAG_EMBEDDING_BATCH_SIZE,
-    RAG_TOP_K,
-    RAG_TOP_K_RERANKER,
-    RAG_RELEVANCE_THRESHOLD,
-    RAG_HYBRID_BM25_WEIGHT,
-    RAG_ALLOWED_FILE_EXTENSIONS,
-    RAG_FILE_MAX_COUNT,
-    RAG_FILE_MAX_SIZE,
-    RAG_OPENAI_API_BASE_URL,
-    RAG_OPENAI_API_KEY,
-    RAG_AZURE_OPENAI_BASE_URL,
-    RAG_AZURE_OPENAI_API_KEY,
-    RAG_AZURE_OPENAI_API_VERSION,
-    RAG_OLLAMA_BASE_URL,
-    RAG_OLLAMA_API_KEY,
-    CHUNK_OVERLAP,
-    CHUNK_SIZE,
-    CONTENT_EXTRACTION_ENGINE,
-    DATALAB_MARKER_API_KEY,
-    DATALAB_MARKER_LANGS,
-    DATALAB_MARKER_SKIP_CACHE,
-    DATALAB_MARKER_FORCE_OCR,
-    DATALAB_MARKER_PAGINATE,
-    DATALAB_MARKER_STRIP_EXISTING_OCR,
-    DATALAB_MARKER_DISABLE_IMAGE_EXTRACTION,
-    DATALAB_MARKER_OUTPUT_FORMAT,
-    DATALAB_MARKER_USE_LLM,
-    EXTERNAL_DOCUMENT_LOADER_URL,
-    EXTERNAL_DOCUMENT_LOADER_API_KEY,
-    TIKA_SERVER_URL,
-    DOCLING_SERVER_URL,
-    DOCLING_OCR_ENGINE,
-    DOCLING_OCR_LANG,
-    DOCLING_DO_PICTURE_DESCRIPTION,
-    DOCLING_PICTURE_DESCRIPTION_MODE,
-    DOCLING_PICTURE_DESCRIPTION_LOCAL,
-    DOCLING_PICTURE_DESCRIPTION_API,
-    DOCUMENT_INTELLIGENCE_ENDPOINT,
-    DOCUMENT_INTELLIGENCE_KEY,
-    MISTRAL_OCR_API_KEY,
-    RAG_TEXT_SPLITTER,
-    TIKTOKEN_ENCODING_NAME,
-    PDF_EXTRACT_IMAGES,
-    YOUTUBE_LOADER_LANGUAGE,
-    YOUTUBE_LOADER_PROXY_URL,
+    RAG_TEMPLATE,  # RAG模板
+    DEFAULT_RAG_TEMPLATE,  # 默认RAG模板
+    RAG_FULL_CONTEXT,  # RAG全文上下文
+    BYPASS_EMBEDDING_AND_RETRIEVAL,  # 绕过嵌入和检索
+    RAG_EMBEDDING_MODEL,  # RAG嵌入模型
+    RAG_EMBEDDING_MODEL_AUTO_UPDATE,  # RAG嵌入模型自动更新
+    RAG_EMBEDDING_MODEL_TRUST_REMOTE_CODE,  # RAG嵌入模型信任远程代码
+    RAG_RERANKING_ENGINE,  # RAG重排序引擎
+    RAG_RERANKING_MODEL,  # RAG重排序模型
+    RAG_EXTERNAL_RERANKER_URL,  # RAG外部重排序URL
+    RAG_EXTERNAL_RERANKER_API_KEY,  # RAG外部重排序API密钥
+    RAG_RERANKING_MODEL_AUTO_UPDATE,  # RAG重排序模型自动更新
+    RAG_RERANKING_MODEL_TRUST_REMOTE_CODE,  # RAG重排序模型信任远程代码
+    RAG_EMBEDDING_ENGINE,  # RAG嵌入引擎
+    RAG_EMBEDDING_BATCH_SIZE,  # RAG嵌入批量大小
+    RAG_TOP_K,  # RAG检索顶部K个结果
+    RAG_TOP_K_RERANKER,  # RAG重排序顶部K个结果
+    RAG_RELEVANCE_THRESHOLD,  # RAG相关性阈值
+    RAG_HYBRID_BM25_WEIGHT,  # RAG混合BM25权重
+    RAG_ALLOWED_FILE_EXTENSIONS,  # RAG允许的文件扩展名
+    RAG_FILE_MAX_COUNT,  # RAG最大文件数
+    RAG_FILE_MAX_SIZE,  # RAG最大文件大小
+    RAG_OPENAI_API_BASE_URL,  # RAG OpenAI API基础URL
+    RAG_OPENAI_API_KEY,  # RAG OpenAI API密钥
+    RAG_AZURE_OPENAI_BASE_URL,  # RAG Azure OpenAI基础URL
+    RAG_AZURE_OPENAI_API_KEY,  # RAG Azure OpenAI API密钥
+    RAG_AZURE_OPENAI_API_VERSION,  # RAG Azure OpenAI API版本
+    RAG_OLLAMA_BASE_URL,  # RAG Ollama基础URL
+    RAG_OLLAMA_API_KEY,  # RAG Ollama API密钥
+    CHUNK_OVERLAP,  # 块重叠
+    CHUNK_SIZE,  # 块大小
+    CONTENT_EXTRACTION_ENGINE,  # 内容提取引擎
+    DATALAB_MARKER_API_KEY,  # Datalab Marker API密钥
+    DATALAB_MARKER_LANGS,  # Datalab Marker语言
+    DATALAB_MARKER_SKIP_CACHE,  # Datalab Marker跳过缓存
+    DATALAB_MARKER_FORCE_OCR,  # Datalab Marker强制OCR
+    DATALAB_MARKER_PAGINATE,  # Datalab Marker分页
+    DATALAB_MARKER_STRIP_EXISTING_OCR,  # Datalab Marker剥离现有OCR
+    DATALAB_MARKER_DISABLE_IMAGE_EXTRACTION,  # Datalab Marker禁用图像提取
+    DATALAB_MARKER_OUTPUT_FORMAT,  # Datalab Marker输出格式
+    DATALAB_MARKER_USE_LLM,  # Datalab Marker使用LLM
+    EXTERNAL_DOCUMENT_LOADER_URL,  # 外部文档加载器URL
+    EXTERNAL_DOCUMENT_LOADER_API_KEY,  # 外部文档加载器API密钥
+    TIKA_SERVER_URL,  # Tika服务器URL
+    DOCLING_SERVER_URL,  # Docling服务器URL
+    DOCLING_OCR_ENGINE,  # Docling OCR引擎
+    DOCLING_OCR_LANG,  # Docling OCR语言
+    DOCLING_DO_PICTURE_DESCRIPTION,  # Docling执行图片描述
+    DOCLING_PICTURE_DESCRIPTION_MODE,  # Docling图片描述模式
+    DOCLING_PICTURE_DESCRIPTION_LOCAL,  # Docling本地图片描述
+    DOCLING_PICTURE_DESCRIPTION_API,  # Docling图片描述API
+    DOCUMENT_INTELLIGENCE_ENDPOINT,  # 文档智能端点
+    DOCUMENT_INTELLIGENCE_KEY,  # 文档智能密钥
+    MISTRAL_OCR_API_KEY,  # Mistral OCR API密钥
+    RAG_TEXT_SPLITTER,  # RAG文本分割器
+    TIKTOKEN_ENCODING_NAME,  # Tiktoken编码名称
+    PDF_EXTRACT_IMAGES,  # PDF提取图像
+    YOUTUBE_LOADER_LANGUAGE,  # YouTube加载器语言
+    YOUTUBE_LOADER_PROXY_URL,  # YouTube加载器代理URL
     # Retrieval (Web Search)
-    ENABLE_WEB_SEARCH,
-    WEB_SEARCH_ENGINE,
-    BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL,
-    BYPASS_WEB_SEARCH_WEB_LOADER,
-    WEB_SEARCH_RESULT_COUNT,
-    WEB_SEARCH_CONCURRENT_REQUESTS,
-    WEB_SEARCH_TRUST_ENV,
-    WEB_SEARCH_DOMAIN_FILTER_LIST,
-    JINA_API_KEY,
-    SEARCHAPI_API_KEY,
-    SEARCHAPI_ENGINE,
-    SERPAPI_API_KEY,
-    SERPAPI_ENGINE,
-    SEARXNG_QUERY_URL,
-    YACY_QUERY_URL,
-    YACY_USERNAME,
-    YACY_PASSWORD,
-    SERPER_API_KEY,
-    SERPLY_API_KEY,
-    SERPSTACK_API_KEY,
-    SERPSTACK_HTTPS,
-    TAVILY_API_KEY,
-    TAVILY_EXTRACT_DEPTH,
-    BING_SEARCH_V7_ENDPOINT,
-    BING_SEARCH_V7_SUBSCRIPTION_KEY,
-    BRAVE_SEARCH_API_KEY,
-    EXA_API_KEY,
-    PERPLEXITY_API_KEY,
-    PERPLEXITY_MODEL,
-    PERPLEXITY_SEARCH_CONTEXT_USAGE,
-    SOUGOU_API_SID,
-    SOUGOU_API_SK,
-    KAGI_SEARCH_API_KEY,
-    MOJEEK_SEARCH_API_KEY,
-    BOCHA_SEARCH_API_KEY,
-    GOOGLE_PSE_API_KEY,
-    GOOGLE_PSE_ENGINE_ID,
-    GOOGLE_DRIVE_CLIENT_ID,
-    GOOGLE_DRIVE_API_KEY,
-    ONEDRIVE_CLIENT_ID,
-    ONEDRIVE_SHAREPOINT_URL,
-    ONEDRIVE_SHAREPOINT_TENANT_ID,
-    ENABLE_RAG_HYBRID_SEARCH,
-    ENABLE_RAG_LOCAL_WEB_FETCH,
-    ENABLE_WEB_LOADER_SSL_VERIFICATION,
-    ENABLE_GOOGLE_DRIVE_INTEGRATION,
-    ENABLE_ONEDRIVE_INTEGRATION,
-    UPLOAD_DIR,
-    EXTERNAL_WEB_SEARCH_URL,
-    EXTERNAL_WEB_SEARCH_API_KEY,
-    EXTERNAL_WEB_LOADER_URL,
-    EXTERNAL_WEB_LOADER_API_KEY,
+    ENABLE_WEB_SEARCH,  # 是否启用网络搜索
+    WEB_SEARCH_ENGINE,  # 网络搜索引擎
+    BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL,  # 绕过嵌入和检索
+    BYPASS_WEB_SEARCH_WEB_LOADER,  # 绕过网络搜索加载器
+    WEB_SEARCH_RESULT_COUNT,  # 网络搜索结果数
+    WEB_SEARCH_CONCURRENT_REQUESTS,  # 网络搜索并发请求数
+    WEB_SEARCH_TRUST_ENV,  # 网络搜索信任环境
+    WEB_SEARCH_DOMAIN_FILTER_LIST,  # 网络搜索域过滤列表
+    JINA_API_KEY,  # Jina API密钥
+    SEARCHAPI_API_KEY,  # SearchAPI API密钥
+    SEARCHAPI_ENGINE,  # SearchAPI引擎
+    SERPAPI_API_KEY,  # SERPAPI API密钥
+    SERPAPI_ENGINE,  # SERPAPI引擎
+    SEARXNG_QUERY_URL,  # SEARXNG查询URL
+    YACY_QUERY_URL,  # YACY查询URL
+    YACY_USERNAME,  # YACY用户名
+    YACY_PASSWORD,  # YACY密码
+    SERPER_API_KEY,  # SERPER API密钥
+    SERPLY_API_KEY,  # SERPLY API密钥
+    SERPSTACK_API_KEY,  # SERPSTACK API密钥
+    SERPSTACK_HTTPS,  # SERPSTACK HTTPS
+    TAVILY_API_KEY,  # TAVILY API密钥
+    TAVILY_EXTRACT_DEPTH,  # TAVILY提取深度
+    BING_SEARCH_V7_ENDPOINT,  # Bing搜索V7端点
+    BING_SEARCH_V7_SUBSCRIPTION_KEY,  # Bing搜索V7订阅密钥
+    BRAVE_SEARCH_API_KEY,  # Brave搜索API密钥
+    EXA_API_KEY,  # EXA API密钥
+    PERPLEXITY_API_KEY,  # PERPLEXITY API密钥
+    PERPLEXITY_MODEL,  # PERPLEXITY模型
+    PERPLEXITY_SEARCH_CONTEXT_USAGE,  # PERPLEXITY搜索上下文使用
+    SOUGOU_API_SID,  # SOUGOU API SID
+    SOUGOU_API_SK,  # SOUGOU API SK
+    KAGI_SEARCH_API_KEY,  # KAGI搜索API密钥
+    MOJEEK_SEARCH_API_KEY,  # MOJEEK搜索API密钥
+    BOCHA_SEARCH_API_KEY,  # BOCHA搜索API密钥
+    GOOGLE_PSE_API_KEY,  # GOOGLE PSE API密钥
+    GOOGLE_PSE_ENGINE_ID,  # GOOGLE PSE引擎ID
+    GOOGLE_DRIVE_CLIENT_ID,  # GOOGLE DRIVE客户端ID
+    GOOGLE_DRIVE_API_KEY,  # GOOGLE DRIVE API密钥
+    ONEDRIVE_CLIENT_ID,  # OneDrive客户端ID
+    ONEDRIVE_SHAREPOINT_URL,  # OneDrive SharePoint URL
+    ONEDRIVE_SHAREPOINT_TENANT_ID,  # OneDrive SharePoint租户ID
+    ENABLE_RAG_HYBRID_SEARCH,  # 启用RAG混合搜索
+    ENABLE_RAG_LOCAL_WEB_FETCH,  # 启用RAG本地Web获取
+    ENABLE_WEB_LOADER_SSL_VERIFICATION,  # 启用WEB加载器SSL验证
+    ENABLE_GOOGLE_DRIVE_INTEGRATION,  # 启用GOOGLE DRIVE集成
+    ENABLE_ONEDRIVE_INTEGRATION,  # 启用OneDrive集成
+    UPLOAD_DIR,  # 上传目录
+    EXTERNAL_WEB_SEARCH_URL,  # 外部Web搜索URL
+    EXTERNAL_WEB_SEARCH_API_KEY,  # 外部Web搜索API密钥
+    EXTERNAL_WEB_LOADER_URL,  # 外部Web加载器URL
+    EXTERNAL_WEB_LOADER_API_KEY,  # 外部Web加载器API密钥
     # WebUI
-    WEBUI_AUTH,
-    WEBUI_NAME,
-    WEBUI_BANNERS,
-    WEBHOOK_URL,
-    ADMIN_EMAIL,
-    SHOW_ADMIN_DETAILS,
-    JWT_EXPIRES_IN,
-    ENABLE_SIGNUP,
-    ENABLE_LOGIN_FORM,
-    ENABLE_API_KEY,
-    ENABLE_API_KEY_ENDPOINT_RESTRICTIONS,
-    API_KEY_ALLOWED_ENDPOINTS,
-    ENABLE_CHANNELS,
-    ENABLE_NOTES,
-    ENABLE_COMMUNITY_SHARING,
-    ENABLE_MESSAGE_RATING,
-    ENABLE_USER_WEBHOOKS,
-    ENABLE_EVALUATION_ARENA_MODELS,
-    USER_PERMISSIONS,
-    DEFAULT_USER_ROLE,
-    PENDING_USER_OVERLAY_CONTENT,
-    PENDING_USER_OVERLAY_TITLE,
-    DEFAULT_PROMPT_SUGGESTIONS,
-    DEFAULT_MODELS,
-    DEFAULT_ARENA_MODEL,
-    MODEL_ORDER_LIST,
-    EVALUATION_ARENA_MODELS,
+    WEBUI_AUTH,  # WebUI认证
+    WEBUI_NAME,  # WebUI名称
+    WEBUI_BANNERS,  # WebUI横幅
+    WEBHOOK_URL,  # Webhook URL
+    ADMIN_EMAIL,  # 管理员电子邮件
+    SHOW_ADMIN_DETAILS,  # 显示管理员详细信息
+    JWT_EXPIRES_IN,  # JWT过期时间
+    ENABLE_SIGNUP,  # 启用注册
+    ENABLE_LOGIN_FORM,  # 启用登录表单
+    ENABLE_API_KEY,  # 启用API密钥
+    ENABLE_API_KEY_ENDPOINT_RESTRICTIONS,  # 启用API密钥端点限制
+    API_KEY_ALLOWED_ENDPOINTS,  # API密钥允许端点
+    ENABLE_CHANNELS,  # 启用频道
+    ENABLE_NOTES,  # 启用笔记
+    ENABLE_COMMUNITY_SHARING,  # 启用社区共享
+    ENABLE_MESSAGE_RATING,  # 启用消息评分
+    ENABLE_USER_WEBHOOKS,  # 启用用户Webhook
+    ENABLE_EVALUATION_ARENA_MODELS,  # 启用评估领域模型
+    USER_PERMISSIONS,  # 用户权限
+    DEFAULT_USER_ROLE,  # 默认用户角色
+    PENDING_USER_OVERLAY_CONTENT,  # 待处理用户覆盖内容
+    PENDING_USER_OVERLAY_TITLE,  # 待处理用户覆盖标题
+    DEFAULT_PROMPT_SUGGESTIONS,  # 默认提示词建议
+    DEFAULT_MODELS,  # 默认模型
+    DEFAULT_ARENA_MODEL,  # 默认领域模型
+    MODEL_ORDER_LIST,  # 模型顺序列表
+    EVALUATION_ARENA_MODELS,  # 评估领域模型
     # WebUI (OAuth)
-    ENABLE_OAUTH_ROLE_MANAGEMENT,
-    OAUTH_ROLES_CLAIM,
-    OAUTH_EMAIL_CLAIM,
-    OAUTH_PICTURE_CLAIM,
-    OAUTH_USERNAME_CLAIM,
-    OAUTH_ALLOWED_ROLES,
-    OAUTH_ADMIN_ROLES,
+    ENABLE_OAUTH_ROLE_MANAGEMENT,  # 启用OAuth角色管理
+    OAUTH_ROLES_CLAIM,  # OAuth角色声明
+    OAUTH_EMAIL_CLAIM,  # OAuth电子邮件声明
+    OAUTH_PICTURE_CLAIM,  # OAuth图片声明
+    OAUTH_USERNAME_CLAIM,  # OAuth用户名声明
+    OAUTH_ALLOWED_ROLES,  # OAuth允许的角色
+    OAUTH_ADMIN_ROLES,  # OAuth管理员角色
     # WebUI (LDAP)
-    ENABLE_LDAP,
-    LDAP_SERVER_LABEL,
-    LDAP_SERVER_HOST,
-    LDAP_SERVER_PORT,
-    LDAP_ATTRIBUTE_FOR_MAIL,
-    LDAP_ATTRIBUTE_FOR_USERNAME,
-    LDAP_SEARCH_FILTERS,
-    LDAP_SEARCH_BASE,
-    LDAP_APP_DN,
-    LDAP_APP_PASSWORD,
-    LDAP_USE_TLS,
-    LDAP_CA_CERT_FILE,
-    LDAP_VALIDATE_CERT,
-    LDAP_CIPHERS,
+    ENABLE_LDAP,  # 启用LDAP
+    LDAP_SERVER_LABEL,  # LDAP服务器标签
+    LDAP_SERVER_HOST,  # LDAP服务器主机
+    LDAP_SERVER_PORT,  # LDAP服务器端口
+    LDAP_ATTRIBUTE_FOR_MAIL,  # LDAP邮件属性
+    LDAP_ATTRIBUTE_FOR_USERNAME,  # LDAP用户名属性
+    LDAP_SEARCH_FILTERS,  # LDAP搜索过滤器
+    LDAP_SEARCH_BASE,  # LDAP搜索基础
+    LDAP_APP_DN,  # LDAP应用程序DN
+    LDAP_APP_PASSWORD,  # LDAP应用程序密码
+    LDAP_USE_TLS,  # LDAP使用TLS
+    LDAP_CA_CERT_FILE,  # LDAPCA证书文件
+    LDAP_VALIDATE_CERT,  # LDAP验证证书
+    LDAP_CIPHERS,  # LDAP密码
     # Misc
-    ENV,
-    CACHE_DIR,
-    STATIC_DIR,
-    FRONTEND_BUILD_DIR,
-    CORS_ALLOW_ORIGIN,
-    DEFAULT_LOCALE,
-    OAUTH_PROVIDERS,
-    WEBUI_URL,
-    RESPONSE_WATERMARK,
+    ENV,  # 环境
+    CACHE_DIR,  # 缓存目录
+    STATIC_DIR,  # 静态目录
+    FRONTEND_BUILD_DIR,  # 前端构建目录
+    CORS_ALLOW_ORIGIN,  # CORS允许来源
+    DEFAULT_LOCALE,  # 默认语言
+    OAUTH_PROVIDERS,  # OAuth提供者
+    WEBUI_URL,  # WebUI URL
+    RESPONSE_WATERMARK,  # 响应水印
     # Admin
-    ENABLE_ADMIN_CHAT_ACCESS,
-    ENABLE_ADMIN_EXPORT,
+    ENABLE_ADMIN_CHAT_ACCESS,  # 启用管理员聊天访问
+    ENABLE_ADMIN_EXPORT,  # 启用管理员导出
     # Tasks
-    TASK_MODEL,
-    TASK_MODEL_EXTERNAL,
-    ENABLE_TAGS_GENERATION,
-    ENABLE_TITLE_GENERATION,
-    ENABLE_FOLLOW_UP_GENERATION,
-    ENABLE_SEARCH_QUERY_GENERATION,
-    ENABLE_RETRIEVAL_QUERY_GENERATION,
-    ENABLE_AUTOCOMPLETE_GENERATION,
-    TITLE_GENERATION_PROMPT_TEMPLATE,
-    FOLLOW_UP_GENERATION_PROMPT_TEMPLATE,
-    TAGS_GENERATION_PROMPT_TEMPLATE,
-    IMAGE_PROMPT_GENERATION_PROMPT_TEMPLATE,
-    TOOLS_FUNCTION_CALLING_PROMPT_TEMPLATE,
-    QUERY_GENERATION_PROMPT_TEMPLATE,
-    AUTOCOMPLETE_GENERATION_PROMPT_TEMPLATE,
-    AUTOCOMPLETE_GENERATION_INPUT_MAX_LENGTH,
-    AppConfig,
-    reset_config,
+    TASK_MODEL,  # 任务模型
+    TASK_MODEL_EXTERNAL,  # 任务模型外部
+    ENABLE_TAGS_GENERATION,  # 启用标签生成
+    ENABLE_TITLE_GENERATION,  # 启用标题生成
+    ENABLE_FOLLOW_UP_GENERATION,  # 启用跟进生成
+    ENABLE_SEARCH_QUERY_GENERATION,  # 启用搜索查询生成
+    ENABLE_RETRIEVAL_QUERY_GENERATION,  # 启用检索查询生成
+    ENABLE_AUTOCOMPLETE_GENERATION,  # 启用自动完成生成
+    TITLE_GENERATION_PROMPT_TEMPLATE,  # 标题生成提示模板
+    FOLLOW_UP_GENERATION_PROMPT_TEMPLATE,  # 跟进生成提示模板
+    TAGS_GENERATION_PROMPT_TEMPLATE,  # 标签生成提示模板
+    IMAGE_PROMPT_GENERATION_PROMPT_TEMPLATE,  # 图像提示生成提示模板
+    TOOLS_FUNCTION_CALLING_PROMPT_TEMPLATE,  # 工具函数调用提示模板
+    QUERY_GENERATION_PROMPT_TEMPLATE,  # 查询生成提示模板
+    AUTOCOMPLETE_GENERATION_PROMPT_TEMPLATE,  # 自动完成生成提示模板
+    AUTOCOMPLETE_GENERATION_INPUT_MAX_LENGTH,  # 自动完成生成输入最大长度
+    AppConfig,  # 应用程序配置
+    reset_config,  # 重置配置
 )
-from open_webui.env import (
-    AUDIT_EXCLUDED_PATHS,
-    AUDIT_LOG_LEVEL,
-    CHANGELOG,
-    REDIS_URL,
-    REDIS_SENTINEL_HOSTS,
-    REDIS_SENTINEL_PORT,
-    GLOBAL_LOG_LEVEL,
-    MAX_BODY_LOG_SIZE,
-    SAFE_MODE,
-    SRC_LOG_LEVELS,
-    VERSION,
-    INSTANCE_ID,
-    WEBUI_BUILD_HASH,
-    WEBUI_SECRET_KEY,
-    WEBUI_SESSION_COOKIE_SAME_SITE,
-    WEBUI_SESSION_COOKIE_SECURE,
-    WEBUI_AUTH_TRUSTED_EMAIL_HEADER,
-    WEBUI_AUTH_TRUSTED_NAME_HEADER,
-    WEBUI_AUTH_SIGNOUT_REDIRECT_URL,
-    ENABLE_WEBSOCKET_SUPPORT,
-    BYPASS_MODEL_ACCESS_CONTROL,
-    RESET_CONFIG_ON_START,
-    OFFLINE_MODE,
-    ENABLE_OTEL,
-    EXTERNAL_PWA_MANIFEST_URL,
-    AIOHTTP_CLIENT_SESSION_SSL,
+from open_webui.env import (  # 导入环境变量
+    AUDIT_EXCLUDED_PATHS,  # 审计排除路径
+    AUDIT_LOG_LEVEL,  # 审计日志级别
+    CHANGELOG,  # 变更日志
+    REDIS_URL,  # Redis URL
+    REDIS_SENTINEL_HOSTS,  # Redis哨兵主机
+    REDIS_SENTINEL_PORT,  # Redis哨兵端口
+    GLOBAL_LOG_LEVEL,  # 全局日志级别
+    MAX_BODY_LOG_SIZE,  # 最大正文日志大小
+    SAFE_MODE,  # 安全模式
+    SRC_LOG_LEVELS,  # 源日志级别
+    VERSION,  # 版本
+    INSTANCE_ID,  # 实例ID
+    WEBUI_BUILD_HASH,  # WebUI构建哈希
+    WEBUI_SECRET_KEY,  # WebUI秘密密钥
+    WEBUI_SESSION_COOKIE_SAME_SITE,  # WebUI会话Cookie相同站点
+    WEBUI_SESSION_COOKIE_SECURE,  # WebUI会话Cookie安全
+    WEBUI_AUTH_TRUSTED_EMAIL_HEADER,  # WebUI认证信任电子邮件头
+    WEBUI_AUTH_TRUSTED_NAME_HEADER,  # WebUI认证信任名称头
+    WEBUI_AUTH_SIGNOUT_REDIRECT_URL,  # WebUI认证注销重定向URL
+    ENABLE_WEBSOCKET_SUPPORT,  # 启用WebSocket支持
+    BYPASS_MODEL_ACCESS_CONTROL,  # 绕过模型访问控制
+    RESET_CONFIG_ON_START,  # 重置配置启动
+    OFFLINE_MODE,  # 离线模式
+    ENABLE_OTEL,  # 启用OTEL
+    EXTERNAL_PWA_MANIFEST_URL,  # 外部PWA清单URL
+    AIOHTTP_CLIENT_SESSION_SSL,  # AIOHTTP客户端会话SSL
 )
 
 
-from open_webui.utils.models import (
-    get_all_models,
-    get_all_base_models,
-    check_model_access,
+from open_webui.utils.models import (  # 导入模型相关功能
+    get_all_models,  # 获取所有模型
+    get_all_base_models,  # 获取所有基础模型
+    check_model_access,  # 检查模型访问
 )
-from open_webui.utils.chat import (
-    generate_chat_completion as chat_completion_handler,
-    chat_completed as chat_completed_handler,
-    chat_action as chat_action_handler,
+from open_webui.utils.chat import (  # 导入聊天相关功能
+    generate_chat_completion as chat_completion_handler,  # 生成聊天完成处理
+    chat_completed as chat_completed_handler,  # 聊天完成处理
+    chat_action as chat_action_handler,  # 聊天动作处理
 )
-from open_webui.utils.embeddings import generate_embeddings
-from open_webui.utils.middleware import process_chat_payload, process_chat_response
-from open_webui.utils.access_control import has_access
+from open_webui.utils.embeddings import generate_embeddings  # 导入嵌入生成
+from open_webui.utils.middleware import process_chat_payload, process_chat_response  # 导入聊天处理中间件
+from open_webui.utils.access_control import has_access  # 导入访问控制检查
 
-from open_webui.utils.auth import (
-    get_license_data,
-    get_http_authorization_cred,
-    decode_token,
-    get_admin_user,
-    get_verified_user,
+from open_webui.utils.auth import (  # 导入认证相关功能
+    get_license_data,  # 获取许可证数据
+    get_http_authorization_cred,  # 获取HTTP授权凭据
+    decode_token,  # 解码令牌
+    get_admin_user,  # 获取管理员用户
+    get_verified_user,  # 获取验证用户
 )
-from open_webui.utils.plugin import install_tool_and_function_dependencies
-from open_webui.utils.oauth import OAuthManager
-from open_webui.utils.security_headers import SecurityHeadersMiddleware
-from open_webui.utils.redis import get_redis_connection
+from open_webui.utils.plugin import install_tool_and_function_dependencies  # 导入工具和函数依赖安装
+from open_webui.utils.oauth import OAuthManager  # 导入OAuth管理器
+from open_webui.utils.security_headers import SecurityHeadersMiddleware  # 导入安全头中间件
+from open_webui.utils.redis import get_redis_connection  # 导入Redis连接
 
-from open_webui.tasks import (
-    redis_task_command_listener,
-    list_task_ids_by_chat_id,
-    stop_task,
-    list_tasks,
+from open_webui.tasks import (  # 导入任务相关功能
+    redis_task_command_listener,  # Redis任务命令监听器
+    list_task_ids_by_chat_id,  # 按聊天ID列出任务ID
+    stop_task,  # 停止任务
+    list_tasks,  # 列出任务
 )  # Import from tasks.py
 
-from open_webui.utils.redis import get_sentinels_from_env
+from open_webui.utils.redis import get_sentinels_from_env  # 导入从环境获取哨兵
 
 
 if SAFE_MODE:
