@@ -1,4 +1,7 @@
-"""Peewee migrations -- 009_add_models.py.
+"""Peewee migrations -- 012_add_tools.py.
+
+OpenWebUI 数据库迁移 -- 添加工具管理表。
+此迁移添加了Tool表，用于存储和管理用户定义的AI工具，实现函数调用和工具集成功能。
 
 Some examples (model - class or model name)::
 
@@ -35,10 +38,34 @@ with suppress(ImportError):
 
 
 def migrate(migrator: Migrator, database: pw.Database, *, fake=False):
-    """Write your migrations here."""
+    """
+    创建Tool表的迁移函数。
+    
+    添加Tool(工具)表，用于存储和管理用户定义的AI工具配置。
+    这些工具可以在AI对话中被调用，使AI具有访问外部功能和服务的能力，
+    如网络搜索、数据分析、API调用等。
+    
+    参数:
+        migrator: Peewee迁移器对象
+        database: 数据库连接实例
+        fake: 是否模拟迁移而不实际执行
+    """
 
     @migrator.create_model
     class Tool(pw.Model):
+        """
+        工具表，存储AI可用工具的定义和配置
+        
+        字段说明:
+        - id: 工具的唯一标识符
+        - user_id: 创建此工具的用户ID
+        - name: 工具的名称
+        - content: 工具的实现内容，通常是代码或配置
+        - specs: 工具的规格说明，JSON格式存储
+        - meta: 工具元数据，JSON格式存储
+        - created_at: 创建时间戳
+        - updated_at: 最后更新时间戳
+        """
         id = pw.TextField(unique=True)
         user_id = pw.TextField()
 
@@ -56,6 +83,15 @@ def migrate(migrator: Migrator, database: pw.Database, *, fake=False):
 
 
 def rollback(migrator: Migrator, database: pw.Database, *, fake=False):
-    """Write your rollback migrations here."""
+    """
+    回滚迁移，删除Tool表。
+    
+    当需要撤销此迁移时，删除Tool表。
+    
+    参数:
+        migrator: Peewee迁移器对象
+        database: 数据库连接实例
+        fake: 是否模拟回滚而不实际执行
+    """
 
     migrator.remove_model("tool")

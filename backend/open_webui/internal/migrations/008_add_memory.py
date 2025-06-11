@@ -1,4 +1,7 @@
-"""Peewee migrations -- 002_add_local_sharing.py.
+"""Peewee migrations -- 008_add_memory.py.
+
+OpenWebUI 数据库迁移 -- 添加记忆功能表。
+此迁移添加了Memory表，用于存储用户的长期记忆内容，支持AI对话中的记忆功能。
 
 Some examples (model - class or model name)::
 
@@ -35,8 +38,29 @@ with suppress(ImportError):
 
 
 def migrate(migrator: Migrator, database: pw.Database, *, fake=False):
+    """
+    创建Memory表的迁移函数。
+    
+    添加Memory(记忆)表，用于存储用户的长期记忆内容，提升AI对话的连续性和上下文感知能力。
+    每个记忆条目都与特定用户关联，并包含创建和更新时间戳。
+    
+    参数:
+        migrator: Peewee迁移器对象
+        database: 数据库连接实例
+        fake: 是否模拟迁移而不实际执行
+    """
     @migrator.create_model
     class Memory(pw.Model):
+        """
+        记忆表，存储用户的长期记忆内容
+        
+        字段说明:
+        - id: 记忆条目的唯一标识符
+        - user_id: 拥有此记忆的用户ID
+        - content: 记忆内容文本
+        - updated_at: 记忆最后更新时间
+        - created_at: 记忆创建时间
+        """
         id = pw.CharField(max_length=255, unique=True)
         user_id = pw.CharField(max_length=255)
         content = pw.TextField(null=False)
@@ -48,6 +72,15 @@ def migrate(migrator: Migrator, database: pw.Database, *, fake=False):
 
 
 def rollback(migrator: Migrator, database: pw.Database, *, fake=False):
-    """Write your rollback migrations here."""
+    """
+    回滚迁移，删除Memory表。
+    
+    当需要撤销此迁移时，删除Memory表。
+    
+    参数:
+        migrator: Peewee迁移器对象
+        database: 数据库连接实例
+        fake: 是否模拟回滚而不实际执行
+    """
 
     migrator.remove_model("memory")

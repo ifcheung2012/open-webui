@@ -5,6 +5,16 @@ import { getOpenAIModelsDirect } from './openai';
 import { parse } from 'yaml';
 import { toast } from 'svelte-sonner';
 
+/**
+ * 获取模型列表
+ * 
+ * 从后端API获取可用模型列表，包括本地Ollama模型和远程OpenAI兼容模型
+ * 
+ * @param token - API访问令牌
+ * @param connections - 连接配置对象，包含OpenAI API URLs和API Keys
+ * @param base - 是否只获取基础模型
+ * @returns 模型列表数组
+ */
 export const getModels = async (
 	token: string = '',
 	connections: object | null = null,
@@ -137,7 +147,6 @@ export const getModels = async (
 			}))
 		);
 
-		// Remove duplicates
 		const modelsMap = {};
 		for (const model of models) {
 			modelsMap[model.id] = model;
@@ -149,6 +158,15 @@ export const getModels = async (
 	return models;
 };
 
+/**
+ * 对话完成回调接口
+ * 
+ * 在聊天完成后调用，用于更新聊天历史记录和元数据
+ * 
+ * @param token - API访问令牌
+ * @param body - 包含模型、消息、聊天ID和会话ID的请求体
+ * @returns API响应
+ */
 type ChatCompletedForm = {
 	model: string;
 	messages: string[];
@@ -189,6 +207,16 @@ export const chatCompleted = async (token: string, body: ChatCompletedForm) => {
 	return res;
 };
 
+/**
+ * 聊天动作执行接口
+ * 
+ * 对聊天执行特定动作，如创建笔记、评分等
+ * 
+ * @param token - API访问令牌
+ * @param action_id - 要执行的动作ID
+ * @param body - 包含模型、消息和聊天ID的请求体
+ * @returns API响应
+ */
 type ChatActionForm = {
 	model: string;
 	messages: string[];
@@ -304,7 +332,6 @@ export const getToolServerData = async (token: string, url: string) => {
 		}
 	})
 		.then(async (res) => {
-			// Check if URL ends with .yaml or .yml to determine format
 			if (url.toLowerCase().endsWith('.yaml') || url.toLowerCase().endsWith('.yml')) {
 				if (!res.ok) throw await res.text();
 				const text = await res.text();
@@ -384,7 +411,6 @@ export const executeToolServer = async (
 	let error = null;
 
 	try {
-		// Find the matching operationId in the OpenAPI spec
 		const matchingRoute = Object.entries(serverData.openapi.paths).find(([_, methods]) =>
 			Object.entries(methods as any).some(([__, operation]: any) => operation.operationId === name)
 		);
@@ -405,7 +431,6 @@ export const executeToolServer = async (
 
 		const [httpMethod, operation]: [string, any] = methodEntry;
 
-		// Split parameters by type
 		const pathParams: Record<string, any> = {};
 		const queryParams: Record<string, any> = {};
 		let bodyParams: any = {};
@@ -426,12 +451,10 @@ export const executeToolServer = async (
 
 		let finalUrl = `${url}${routePath}`;
 
-		// Replace path parameters (`{param}`)
 		Object.entries(pathParams).forEach(([key, value]) => {
 			finalUrl = finalUrl.replace(new RegExp(`{${key}}`, 'g'), encodeURIComponent(value));
 		});
 
-		// Append query parameters to URL if any
 		if (Object.keys(queryParams).length > 0) {
 			const queryString = new URLSearchParams(
 				Object.entries(queryParams).map(([k, v]) => [k, String(v)])
@@ -439,18 +462,15 @@ export const executeToolServer = async (
 			finalUrl += `?${queryString}`;
 		}
 
-		// Handle requestBody composite
 		if (operation.requestBody && operation.requestBody.content) {
 			const contentType = Object.keys(operation.requestBody.content)[0];
 			if (params !== undefined) {
 				bodyParams = params;
 			} else {
-				// Optional: Fallback or explicit error if body is expected but not provided
 				throw new Error(`Request body expected for operation '${name}' but none found.`);
 			}
 		}
 
-		// Prepare headers and request options
 		const headers: Record<string, string> = {
 			'Content-Type': 'application/json',
 			...(token && { authorization: `Bearer ${token}` })
@@ -578,24 +598,18 @@ export const generateTitle = async (
 	}
 
 	try {
-		// Step 1: Safely extract the response string
 		const response = res?.choices[0]?.message?.content ?? '';
 
-		// Step 2: Attempt to fix common JSON format issues like single quotes
-		const sanitizedResponse = response.replace(/['‘’`]/g, '"'); // Convert single quotes to double quotes for valid JSON
+		const sanitizedResponse = response.replace(/['‘’`]/g, '"');
 
-		// Step 3: Find the relevant JSON block within the response
 		const jsonStartIndex = sanitizedResponse.indexOf('{');
 		const jsonEndIndex = sanitizedResponse.lastIndexOf('}');
 
-		// Step 4: Check if we found a valid JSON block (with both `{` and `}`)
 		if (jsonStartIndex !== -1 && jsonEndIndex !== -1) {
 			const jsonResponse = sanitizedResponse.substring(jsonStartIndex, jsonEndIndex + 1);
 
-			// Step 5: Parse the JSON block
 			const parsed = JSON.parse(jsonResponse);
 
-			// Step 6: If there's a "tags" key, return the tags array; otherwise, return an empty array
 			if (parsed && parsed.title) {
 				return parsed.title;
 			} else {
@@ -603,10 +617,8 @@ export const generateTitle = async (
 			}
 		}
 
-		// If no valid JSON block found, return an empty array
 		return null;
 	} catch (e) {
-		// Catch and safely return empty array on any parsing errors
 		console.error('Failed to parse response: ', e);
 		return null;
 	}
@@ -650,24 +662,18 @@ export const generateFollowUps = async (
 	}
 
 	try {
-		// Step 1: Safely extract the response string
 		const response = res?.choices[0]?.message?.content ?? '';
 
-		// Step 2: Attempt to fix common JSON format issues like single quotes
-		const sanitizedResponse = response.replace(/['‘’`]/g, '"'); // Convert single quotes to double quotes for valid JSON
+		const sanitizedResponse = response.replace(/['‘’`]/g, '"');
 
-		// Step 3: Find the relevant JSON block within the response
 		const jsonStartIndex = sanitizedResponse.indexOf('{');
 		const jsonEndIndex = sanitizedResponse.lastIndexOf('}');
 
-		// Step 4: Check if we found a valid JSON block (with both `{` and `}`)
 		if (jsonStartIndex !== -1 && jsonEndIndex !== -1) {
 			const jsonResponse = sanitizedResponse.substring(jsonStartIndex, jsonEndIndex + 1);
 
-			// Step 5: Parse the JSON block
 			const parsed = JSON.parse(jsonResponse);
 
-			// Step 6: If there's a "follow_ups" key, return the follow_ups array; otherwise, return an empty array
 			if (parsed && parsed.follow_ups) {
 				return Array.isArray(parsed.follow_ups) ? parsed.follow_ups : [];
 			} else {
@@ -675,10 +681,8 @@ export const generateFollowUps = async (
 			}
 		}
 
-		// If no valid JSON block found, return an empty array
 		return [];
 	} catch (e) {
-		// Catch and safely return empty array on any parsing errors
 		console.error('Failed to parse response: ', e);
 		return [];
 	}
@@ -722,24 +726,18 @@ export const generateTags = async (
 	}
 
 	try {
-		// Step 1: Safely extract the response string
 		const response = res?.choices[0]?.message?.content ?? '';
 
-		// Step 2: Attempt to fix common JSON format issues like single quotes
-		const sanitizedResponse = response.replace(/['‘’`]/g, '"'); // Convert single quotes to double quotes for valid JSON
+		const sanitizedResponse = response.replace(/['‘’`]/g, '"');
 
-		// Step 3: Find the relevant JSON block within the response
 		const jsonStartIndex = sanitizedResponse.indexOf('{');
 		const jsonEndIndex = sanitizedResponse.lastIndexOf('}');
 
-		// Step 4: Check if we found a valid JSON block (with both `{` and `}`)
 		if (jsonStartIndex !== -1 && jsonEndIndex !== -1) {
 			const jsonResponse = sanitizedResponse.substring(jsonStartIndex, jsonEndIndex + 1);
 
-			// Step 5: Parse the JSON block
 			const parsed = JSON.parse(jsonResponse);
 
-			// Step 6: If there's a "tags" key, return the tags array; otherwise, return an empty array
 			if (parsed && parsed.tags) {
 				return Array.isArray(parsed.tags) ? parsed.tags : [];
 			} else {
@@ -747,10 +745,8 @@ export const generateTags = async (
 			}
 		}
 
-		// If no valid JSON block found, return an empty array
 		return [];
 	} catch (e) {
-		// Catch and safely return empty array on any parsing errors
 		console.error('Failed to parse response: ', e);
 		return [];
 	}
@@ -843,7 +839,6 @@ export const generateQueries = async (
 		throw error;
 	}
 
-	// Step 1: Safely extract the response string
 	const response = res?.choices[0]?.message?.content ?? '';
 
 	try {
@@ -853,10 +848,8 @@ export const generateQueries = async (
 		if (jsonStartIndex !== -1 && jsonEndIndex !== -1) {
 			const jsonResponse = response.substring(jsonStartIndex, jsonEndIndex + 1);
 
-			// Step 5: Parse the JSON block
 			const parsed = JSON.parse(jsonResponse);
 
-			// Step 6: If there's a "queries" key, return the queries array; otherwise, return an empty array
 			if (parsed && parsed.queries) {
 				return Array.isArray(parsed.queries) ? parsed.queries : [];
 			} else {
@@ -864,10 +857,8 @@ export const generateQueries = async (
 			}
 		}
 
-		// If no valid JSON block found, return response as is
 		return [response];
 	} catch (e) {
-		// Catch and safely return empty array on any parsing errors
 		console.error('Failed to parse response: ', e);
 		return [response];
 	}
@@ -924,10 +915,8 @@ export const generateAutoCompletion = async (
 		if (jsonStartIndex !== -1 && jsonEndIndex !== -1) {
 			const jsonResponse = response.substring(jsonStartIndex, jsonEndIndex + 1);
 
-			// Step 5: Parse the JSON block
 			const parsed = JSON.parse(jsonResponse);
 
-			// Step 6: If there's a "queries" key, return the queries array; otherwise, return an empty array
 			if (parsed && parsed.text) {
 				return parsed.text;
 			} else {
@@ -935,10 +924,8 @@ export const generateAutoCompletion = async (
 			}
 		}
 
-		// If no valid JSON block found, return response as is
 		return response;
 	} catch (e) {
-		// Catch and safely return empty array on any parsing errors
 		console.error('Failed to parse response: ', e);
 		return response;
 	}
@@ -1012,7 +999,6 @@ export const getPipelinesList = async (token: string = '') => {
 export const uploadPipeline = async (token: string, file: File, urlIdx: string) => {
 	let error = null;
 
-	// Create a new FormData object to handle the file upload
 	const formData = new FormData();
 	formData.append('file', file);
 	formData.append('urlIdx', urlIdx);
@@ -1021,7 +1007,6 @@ export const uploadPipeline = async (token: string, file: File, urlIdx: string) 
 		method: 'POST',
 		headers: {
 			...(token && { authorization: `Bearer ${token}` })
-			// 'Content-Type': 'multipart/form-data' is not needed as Fetch API will set it automatically
 		},
 		body: formData
 	})

@@ -29,6 +29,20 @@ log.setLevel(SRC_LOG_LEVELS["MODELS"])
 
 router = APIRouter()
 
+"""
+聊天管理模块
+
+本模块提供聊天管理的API端点，包括:
+- 创建、更新、删除聊天会话
+- 导入和导出聊天记录
+- 聊天会话的搜索和过滤
+- 聊天标签管理
+- 聊天文件夹组织
+- 聊天消息管理和编辑
+- 聊天共享和克隆功能
+- 聊天归档功能
+"""
+
 ############################
 # GetChatList
 ############################
@@ -39,6 +53,18 @@ router = APIRouter()
 async def get_session_user_chat_list(
     user=Depends(get_verified_user), page: Optional[int] = None
 ):
+    """
+    获取当前用户的聊天列表
+    
+    支持分页查询，默认返回所有聊天
+    
+    参数:
+        user: 当前已验证的用户
+        page: 可选的页码参数
+        
+    返回:
+        list[ChatTitleIdResponse]: 聊天标题和ID列表
+    """
     if page is not None:
         limit = 60
         skip = (page - 1) * limit
@@ -55,7 +81,21 @@ async def get_session_user_chat_list(
 
 @router.delete("/", response_model=bool)
 async def delete_all_user_chats(request: Request, user=Depends(get_verified_user)):
-
+    """
+    删除用户的所有聊天
+    
+    需要用户具有聊天删除权限
+    
+    参数:
+        request: FastAPI请求对象
+        user: 当前已验证的用户
+        
+    返回:
+        bool: 删除操作是否成功
+        
+    异常:
+        HTTPException: 如果用户没有权限
+    """
     if user.role == "user" and not has_permission(
         user.id, "chat.delete", request.app.state.config.USER_PERMISSIONS
     ):
@@ -82,6 +122,25 @@ async def get_user_chat_list_by_user_id(
     direction: Optional[str] = None,
     user=Depends(get_admin_user),
 ):
+    """
+    管理员获取指定用户的聊天列表
+    
+    仅管理员可使用，需要启用ENABLE_ADMIN_CHAT_ACCESS
+    
+    参数:
+        user_id: 目标用户ID
+        page: 可选的页码
+        query: 可选的搜索关键字
+        order_by: 可选的排序字段
+        direction: 可选的排序方向
+        user: 管理员用户
+        
+    返回:
+        list[ChatTitleIdResponse]: 聊天标题和ID列表
+        
+    异常:
+        HTTPException: 如果未启用管理员聊天访问
+    """
     if not ENABLE_ADMIN_CHAT_ACCESS:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -114,6 +173,19 @@ async def get_user_chat_list_by_user_id(
 
 @router.post("/new", response_model=Optional[ChatResponse])
 async def create_new_chat(form_data: ChatForm, user=Depends(get_verified_user)):
+    """
+    创建新的聊天会话
+    
+    参数:
+        form_data: 聊天表单数据
+        user: 已验证的用户
+        
+    返回:
+        ChatResponse: 创建的聊天信息
+        
+    异常:
+        HTTPException: 如果创建失败
+    """
     try:
         chat = Chats.insert_new_chat(user.id, form_data)
         return ChatResponse(**chat.model_dump())
@@ -131,6 +203,21 @@ async def create_new_chat(form_data: ChatForm, user=Depends(get_verified_user)):
 
 @router.post("/import", response_model=Optional[ChatResponse])
 async def import_chat(form_data: ChatImportForm, user=Depends(get_verified_user)):
+    """
+    导入聊天会话
+    
+    支持导入带有标签的聊天记录，自动创建不存在的标签
+    
+    参数:
+        form_data: 聊天导入表单数据
+        user: 已验证的用户
+        
+    返回:
+        ChatResponse: 导入的聊天信息
+        
+    异常:
+        HTTPException: 如果导入失败
+    """
     try:
         chat = Chats.import_chat(user.id, form_data)
         if chat:
@@ -161,6 +248,20 @@ async def import_chat(form_data: ChatImportForm, user=Depends(get_verified_user)
 async def search_user_chats(
     text: str, page: Optional[int] = None, user=Depends(get_verified_user)
 ):
+    """
+    搜索用户的聊天记录
+    
+    支持按文本搜索和按标签搜索（使用tag:标签名格式）
+    如果使用tag:搜索且未找到聊天，会自动删除该标签
+    
+    参数:
+        text: 搜索文本
+        page: 可选的页码
+        user: 已验证的用户
+        
+    返回:
+        list[ChatTitleIdResponse]: 匹配的聊天列表
+    """
     if page is None:
         page = 1
 
@@ -174,7 +275,7 @@ async def search_user_chats(
         )
     ]
 
-    # Delete tag if no chat is found
+    # 删除没有关联聊天的标签
     words = text.strip().split(" ")
     if page == 1 and len(words) == 1 and words[0].startswith("tag:"):
         tag_id = words[0].replace("tag:", "")
@@ -193,6 +294,18 @@ async def search_user_chats(
 
 @router.get("/folder/{folder_id}", response_model=list[ChatResponse])
 async def get_chats_by_folder_id(folder_id: str, user=Depends(get_verified_user)):
+    """
+    获取指定文件夹中的所有聊天
+    
+    递归获取子文件夹中的聊天
+    
+    参数:
+        folder_id: 文件夹ID
+        user: 已验证的用户
+        
+    返回:
+        list[ChatResponse]: 文件夹及其子文件夹中的所有聊天
+    """
     folder_ids = [folder_id]
     children_folders = Folders.get_children_folders_by_id_and_user_id(
         folder_id, user.id
@@ -213,6 +326,15 @@ async def get_chats_by_folder_id(folder_id: str, user=Depends(get_verified_user)
 
 @router.get("/pinned", response_model=list[ChatTitleIdResponse])
 async def get_user_pinned_chats(user=Depends(get_verified_user)):
+    """
+    获取用户已置顶的聊天
+    
+    参数:
+        user: 已验证的用户
+        
+    返回:
+        list[ChatTitleIdResponse]: 置顶的聊天列表
+    """
     return [
         ChatTitleIdResponse(**chat.model_dump())
         for chat in Chats.get_pinned_chats_by_user_id(user.id)
@@ -226,6 +348,15 @@ async def get_user_pinned_chats(user=Depends(get_verified_user)):
 
 @router.get("/all", response_model=list[ChatResponse])
 async def get_user_chats(user=Depends(get_verified_user)):
+    """
+    获取用户的所有聊天（非归档）
+    
+    参数:
+        user: 已验证的用户
+        
+    返回:
+        list[ChatResponse]: 用户的所有聊天列表
+    """
     return [
         ChatResponse(**chat.model_dump())
         for chat in Chats.get_chats_by_user_id(user.id)
@@ -239,6 +370,15 @@ async def get_user_chats(user=Depends(get_verified_user)):
 
 @router.get("/all/archived", response_model=list[ChatResponse])
 async def get_user_archived_chats(user=Depends(get_verified_user)):
+    """
+    获取用户的所有已归档聊天
+    
+    参数:
+        user: 已验证的用户
+        
+    返回:
+        list[ChatResponse]: 用户的所有已归档聊天列表
+    """
     return [
         ChatResponse(**chat.model_dump())
         for chat in Chats.get_archived_chats_by_user_id(user.id)
@@ -252,33 +392,47 @@ async def get_user_archived_chats(user=Depends(get_verified_user)):
 
 @router.get("/all/tags", response_model=list[TagModel])
 async def get_all_user_tags(user=Depends(get_verified_user)):
-    try:
-        tags = Tags.get_tags_by_user_id(user.id)
-        return tags
-    except Exception as e:
-        log.exception(e)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT()
-        )
+    """
+    获取用户的所有标签
+    
+    参数:
+        user: 已验证的用户
+        
+    返回:
+        list[TagModel]: 用户的标签列表
+    """
+    return [
+        TagModel(name=tag.name, id=tag.id)
+        for tag in Tags.get_tags_by_user_id(user.id)
+    ]
 
 
 ############################
-# GetAllChatsInDB
+# GetAllUserChatsInDB
 ############################
 
 
 @router.get("/all/db", response_model=list[ChatResponse])
 async def get_all_user_chats_in_db(user=Depends(get_admin_user)):
-    if not ENABLE_ADMIN_EXPORT:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
-        )
-    return [ChatResponse(**chat.model_dump()) for chat in Chats.get_chats()]
+    """
+    获取数据库中的所有用户聊天
+    
+    仅管理员可使用
+    
+    参数:
+        user: 管理员用户
+        
+    返回:
+        list[ChatResponse]: 所有用户的聊天列表
+    """
+    return [
+        ChatResponse(**chat.model_dump())
+        for chat in Chats.get_all_chats()
+    ]
 
 
 ############################
-# GetArchivedChats
+# GetArchivedChatList
 ############################
 
 
@@ -290,6 +444,21 @@ async def get_archived_session_user_chat_list(
     direction: Optional[str] = None,
     user=Depends(get_verified_user),
 ):
+    """
+    获取当前用户的已归档聊天列表
+    
+    支持分页、搜索和排序
+    
+    参数:
+        page: 可选的页码
+        query: 可选的搜索关键字
+        order_by: 可选的排序字段
+        direction: 可选的排序方向
+        user: 已验证的用户
+        
+    返回:
+        list[ChatTitleIdResponse]: 已归档的聊天列表
+    """
     if page is None:
         page = 1
 
@@ -304,17 +473,9 @@ async def get_archived_session_user_chat_list(
     if direction:
         filter["direction"] = direction
 
-    chat_list = [
-        ChatTitleIdResponse(**chat.model_dump())
-        for chat in Chats.get_archived_chat_list_by_user_id(
-            user.id,
-            filter=filter,
-            skip=skip,
-            limit=limit,
-        )
-    ]
-
-    return chat_list
+    return Chats.get_chat_title_id_list_by_user_id(
+        user.id, include_archived=True, filter=filter, skip=skip, limit=limit
+    )
 
 
 ############################
@@ -324,6 +485,15 @@ async def get_archived_session_user_chat_list(
 
 @router.post("/archive/all", response_model=bool)
 async def archive_all_chats(user=Depends(get_verified_user)):
+    """
+    归档用户的所有聊天
+    
+    参数:
+        user: 已验证的用户
+        
+    返回:
+        bool: 归档操作是否成功
+    """
     return Chats.archive_all_chats_by_user_id(user.id)
 
 
@@ -334,35 +504,45 @@ async def archive_all_chats(user=Depends(get_verified_user)):
 
 @router.get("/share/{share_id}", response_model=Optional[ChatResponse])
 async def get_shared_chat_by_id(share_id: str, user=Depends(get_verified_user)):
-    if user.role == "pending":
+    """
+    通过共享ID获取共享聊天
+    
+    参数:
+        share_id: 共享的聊天ID
+        user: 已验证的用户
+        
+    返回:
+        ChatResponse: 共享的聊天信息
+        
+    异常:
+        HTTPException: 如果找不到共享聊天
+    """
+    chat = Chats.get_shared_chat_by_id(share_id)
+
+    if not chat:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND
+            status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
         )
 
-    if user.role == "user" or (user.role == "admin" and not ENABLE_ADMIN_CHAT_ACCESS):
-        chat = Chats.get_chat_by_share_id(share_id)
-    elif user.role == "admin" and ENABLE_ADMIN_CHAT_ACCESS:
-        chat = Chats.get_chat_by_id(share_id)
-
-    if chat:
-        return ChatResponse(**chat.model_dump())
-
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND
-        )
+    return ChatResponse(**chat.model_dump())
 
 
 ############################
-# GetChatsByTags
+# TagForm
 ############################
 
 
 class TagForm(BaseModel):
+    """
+    标签表单模型
+    """
     name: str
 
 
 class TagFilterForm(TagForm):
+    """
+    带分页的标签过滤表单模型
+    """
     skip: Optional[int] = 0
     limit: Optional[int] = 50
 
@@ -371,13 +551,19 @@ class TagFilterForm(TagForm):
 async def get_user_chat_list_by_tag_name(
     form_data: TagFilterForm, user=Depends(get_verified_user)
 ):
-    chats = Chats.get_chat_list_by_user_id_and_tag_name(
+    """
+    获取带有指定标签的聊天列表
+    
+    参数:
+        form_data: 标签过滤表单，包含标签名称和分页信息
+        user: 已验证的用户
+        
+    返回:
+        list[ChatTitleIdResponse]: 带有指定标签的聊天列表
+    """
+    return Chats.get_chat_title_id_list_by_user_id_and_tag_name(
         user.id, form_data.name, form_data.skip, form_data.limit
     )
-    if len(chats) == 0:
-        Tags.delete_tag_by_name_and_user_id(form_data.name, user.id)
-
-    return chats
 
 
 ############################
@@ -387,15 +573,27 @@ async def get_user_chat_list_by_tag_name(
 
 @router.get("/{id}", response_model=Optional[ChatResponse])
 async def get_chat_by_id(id: str, user=Depends(get_verified_user)):
+    """
+    通过ID获取聊天详情
+    
+    参数:
+        id: 聊天ID
+        user: 已验证的用户
+        
+    返回:
+        ChatResponse: 聊天详情
+        
+    异常:
+        HTTPException: 如果找不到聊天或用户无权访问
+    """
     chat = Chats.get_chat_by_id_and_user_id(id, user.id)
 
-    if chat:
-        return ChatResponse(**chat.model_dump())
-
-    else:
+    if not chat:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND
+            status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
         )
+
+    return ChatResponse(**chat.model_dump())
 
 
 ############################
@@ -407,22 +605,39 @@ async def get_chat_by_id(id: str, user=Depends(get_verified_user)):
 async def update_chat_by_id(
     id: str, form_data: ChatForm, user=Depends(get_verified_user)
 ):
-    chat = Chats.get_chat_by_id_and_user_id(id, user.id)
-    if chat:
-        updated_chat = {**chat.chat, **form_data.chat}
-        chat = Chats.update_chat_by_id(id, updated_chat)
+    """
+    更新聊天信息
+    
+    参数:
+        id: 聊天ID
+        form_data: 聊天表单数据
+        user: 已验证的用户
+        
+    返回:
+        ChatResponse: 更新后的聊天信息
+        
+    异常:
+        HTTPException: 如果找不到聊天或更新失败
+    """
+    try:
+        chat = Chats.update_chat_by_id_and_user_id(id, user.id, form_data)
         return ChatResponse(**chat.model_dump())
-    else:
+    except Exception as e:
+        log.exception(e)
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+            status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
         )
 
 
 ############################
 # UpdateChatMessageById
 ############################
+
+
 class MessageForm(BaseModel):
+    """
+    消息表单模型
+    """
     content: str
 
 
@@ -430,56 +645,76 @@ class MessageForm(BaseModel):
 async def update_chat_message_by_id(
     id: str, message_id: str, form_data: MessageForm, user=Depends(get_verified_user)
 ):
-    chat = Chats.get_chat_by_id(id)
+    """
+    更新聊天消息
+    
+    参数:
+        id: 聊天ID
+        message_id: 消息ID
+        form_data: 消息表单数据
+        user: 已验证的用户
+        
+    返回:
+        ChatResponse: 更新后的聊天信息
+        
+    异常:
+        HTTPException: 如果找不到聊天或消息，或更新失败
+    """
+    chat = Chats.get_chat_by_id_and_user_id(id, user.id)
 
     if not chat:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+            status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
         )
 
-    if chat.user_id != user.id and user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
-        )
+    try:
+        # 遍历消息列表找到匹配的消息ID
+        for i, message in enumerate(chat.chat.get("messages", [])):
+            if message.get("id") == message_id:
+                # 更新消息内容
+                message["content"] = form_data.content
 
-    chat = Chats.upsert_message_to_chat_by_id_and_message_id(
-        id,
-        message_id,
-        {
-            "content": form_data.content,
-        },
-    )
+                # 设置已编辑标记
+                if "edited" not in message:
+                    message["edited"] = True
 
-    event_emitter = get_event_emitter(
-        {
-            "user_id": user.id,
-            "chat_id": id,
-            "message_id": message_id,
-        },
-        False,
-    )
+                chat.chat["messages"][i] = message
+                break
 
-    if event_emitter:
-        await event_emitter(
-            {
-                "type": "chat:message",
-                "data": {
-                    "chat_id": id,
+        # 保存更新后的聊天
+        chat = Chats.update_chat_by_id(id, chat.chat)
+
+        # 发送消息编辑事件
+        event_emitter = get_event_emitter()
+        if event_emitter:
+            event_emitter.emit(
+                {
+                    "event": "chat:message:update",
+                    "type": "chat",
+                    "id": id,
                     "message_id": message_id,
-                    "content": form_data.content,
+                    "form_data": form_data.dict(),
                 },
-            }
-        )
+                user_id=user.id,
+            )
 
-    return ChatResponse(**chat.model_dump())
+        return ChatResponse(**chat.model_dump())
+    except Exception as e:
+        log.exception(e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT()
+        )
 
 
 ############################
 # SendChatMessageEventById
 ############################
+
+
 class EventForm(BaseModel):
+    """
+    事件表单模型
+    """
     type: str
     data: dict
 
@@ -488,36 +723,61 @@ class EventForm(BaseModel):
 async def send_chat_message_event_by_id(
     id: str, message_id: str, form_data: EventForm, user=Depends(get_verified_user)
 ):
-    chat = Chats.get_chat_by_id(id)
+    """
+    发送聊天消息事件
+    
+    参数:
+        id: 聊天ID
+        message_id: 消息ID
+        form_data: 事件表单数据
+        user: 已验证的用户
+        
+    返回:
+        bool: 操作是否成功
+        
+    异常:
+        HTTPException: 如果找不到聊天或消息，或发送事件失败
+    """
+    chat = Chats.get_chat_by_id_and_user_id(id, user.id)
 
     if not chat:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+            status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
         )
-
-    if chat.user_id != user.id and user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
-        )
-
-    event_emitter = get_event_emitter(
-        {
-            "user_id": user.id,
-            "chat_id": id,
-            "message_id": message_id,
-        }
-    )
 
     try:
+        # 检查消息是否存在
+        found = False
+        for message in chat.chat.get("messages", []):
+            if message.get("id") == message_id:
+                found = True
+                break
+
+        if not found:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
+            )
+
+        # 发送消息事件
+        event_emitter = get_event_emitter()
         if event_emitter:
-            await event_emitter(form_data.model_dump())
-        else:
-            return False
+            event_emitter.emit(
+                {
+                    "event": f"chat:message:{form_data.type}",
+                    "type": "chat",
+                    "id": id,
+                    "message_id": message_id,
+                    "data": form_data.data,
+                },
+                user_id=user.id,
+            )
+
         return True
-    except:
-        return False
+    except Exception as e:
+        log.exception(e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT()
+        )
 
 
 ############################
@@ -527,31 +787,44 @@ async def send_chat_message_event_by_id(
 
 @router.delete("/{id}", response_model=bool)
 async def delete_chat_by_id(request: Request, id: str, user=Depends(get_verified_user)):
-    if user.role == "admin":
-        chat = Chats.get_chat_by_id(id)
-        for tag in chat.meta.get("tags", []):
-            if Chats.count_chats_by_tag_name_and_user_id(tag, user.id) == 1:
-                Tags.delete_tag_by_name_and_user_id(tag, user.id)
+    """
+    删除聊天
+    
+    参数:
+        request: FastAPI请求对象
+        id: 聊天ID
+        user: 已验证的用户
+        
+    返回:
+        bool: 删除操作是否成功
+        
+    异常:
+        HTTPException: 如果找不到聊天，或用户没有权限，或删除失败
+    """
+    # 检查用户权限
+    if user.role == "user" and not has_permission(
+        user.id, "chat.delete", request.app.state.config.USER_PERMISSIONS
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+        )
 
-        result = Chats.delete_chat_by_id(id)
+    chat = Chats.get_chat_by_id_and_user_id(id, user.id)
 
-        return result
-    else:
-        if not has_permission(
-            user.id, "chat.delete", request.app.state.config.USER_PERMISSIONS
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
-            )
+    if not chat:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
+        )
 
-        chat = Chats.get_chat_by_id(id)
-        for tag in chat.meta.get("tags", []):
-            if Chats.count_chats_by_tag_name_and_user_id(tag, user.id) == 1:
-                Tags.delete_tag_by_name_and_user_id(tag, user.id)
-
-        result = Chats.delete_chat_by_id_and_user_id(id, user.id)
-        return result
+    try:
+        Chats.delete_chat_by_id(id)
+        return True
+    except Exception as e:
+        log.exception(e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT()
+        )
 
 
 ############################
@@ -561,13 +834,27 @@ async def delete_chat_by_id(request: Request, id: str, user=Depends(get_verified
 
 @router.get("/{id}/pinned", response_model=Optional[bool])
 async def get_pinned_status_by_id(id: str, user=Depends(get_verified_user)):
+    """
+    获取聊天的置顶状态
+    
+    参数:
+        id: 聊天ID
+        user: 已验证的用户
+        
+    返回:
+        bool: 聊天是否被置顶
+        
+    异常:
+        HTTPException: 如果找不到聊天
+    """
     chat = Chats.get_chat_by_id_and_user_id(id, user.id)
-    if chat:
-        return chat.pinned
-    else:
+
+    if not chat:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.DEFAULT()
+            status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
         )
+
+    return chat.is_pinned
 
 
 ############################
@@ -577,13 +864,28 @@ async def get_pinned_status_by_id(id: str, user=Depends(get_verified_user)):
 
 @router.post("/{id}/pin", response_model=Optional[ChatResponse])
 async def pin_chat_by_id(id: str, user=Depends(get_verified_user)):
-    chat = Chats.get_chat_by_id_and_user_id(id, user.id)
-    if chat:
-        chat = Chats.toggle_chat_pinned_by_id(id)
-        return chat
-    else:
+    """
+    置顶或取消置顶聊天
+    
+    切换聊天的置顶状态
+    
+    参数:
+        id: 聊天ID
+        user: 已验证的用户
+        
+    返回:
+        ChatResponse: 更新后的聊天信息
+        
+    异常:
+        HTTPException: 如果找不到聊天或操作失败
+    """
+    try:
+        chat = Chats.toggle_pin_chat_by_id_and_user_id(id, user.id)
+        return ChatResponse(**chat.model_dump())
+    except Exception as e:
+        log.exception(e)
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.DEFAULT()
+            status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
         )
 
 
@@ -593,6 +895,9 @@ async def pin_chat_by_id(id: str, user=Depends(get_verified_user)):
 
 
 class CloneForm(BaseModel):
+    """
+    克隆表单模型
+    """
     title: Optional[str] = None
 
 
@@ -600,20 +905,35 @@ class CloneForm(BaseModel):
 async def clone_chat_by_id(
     form_data: CloneForm, id: str, user=Depends(get_verified_user)
 ):
-    chat = Chats.get_chat_by_id_and_user_id(id, user.id)
-    if chat:
-        updated_chat = {
-            **chat.chat,
-            "originalChatId": chat.id,
-            "branchPointMessageId": chat.chat["history"]["currentId"],
-            "title": form_data.title if form_data.title else f"Clone of {chat.title}",
-        }
+    """
+    克隆聊天
+    
+    创建聊天的副本，可以指定新标题
+    
+    参数:
+        form_data: 克隆表单数据
+        id: 聊天ID
+        user: 已验证的用户
+        
+    返回:
+        ChatResponse: 克隆后的新聊天信息
+        
+    异常:
+        HTTPException: 如果找不到原聊天或克隆失败
+    """
+    try:
+        original_chat = Chats.get_chat_by_id_and_user_id(id, user.id)
+        if not original_chat:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
+            )
 
-        chat = Chats.insert_new_chat(user.id, ChatForm(**{"chat": updated_chat}))
-        return ChatResponse(**chat.model_dump())
-    else:
+        cloned_chat = Chats.clone_chat(id, user.id, form_data.title)
+        return ChatResponse(**cloned_chat.model_dump())
+    except Exception as e:
+        log.exception(e)
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.DEFAULT()
+            status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
         )
 
 
@@ -624,25 +944,36 @@ async def clone_chat_by_id(
 
 @router.post("/{id}/clone/shared", response_model=Optional[ChatResponse])
 async def clone_shared_chat_by_id(id: str, user=Depends(get_verified_user)):
+    """
+    克隆共享聊天
+    
+    将共享的聊天复制到当前用户的聊天列表中
+    
+    参数:
+        id: 共享聊天ID
+        user: 已验证的用户
+        
+    返回:
+        ChatResponse: 克隆后的新聊天信息
+        
+    异常:
+        HTTPException: 如果找不到共享聊天或克隆失败
+    """
+    try:
+        # 获取共享聊天
+        original_chat = Chats.get_shared_chat_by_id(id)
+        if not original_chat:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
+            )
 
-    if user.role == "admin":
-        chat = Chats.get_chat_by_id(id)
-    else:
-        chat = Chats.get_chat_by_share_id(id)
-
-    if chat:
-        updated_chat = {
-            **chat.chat,
-            "originalChatId": chat.id,
-            "branchPointMessageId": chat.chat["history"]["currentId"],
-            "title": f"Clone of {chat.title}",
-        }
-
-        chat = Chats.insert_new_chat(user.id, ChatForm(**{"chat": updated_chat}))
-        return ChatResponse(**chat.model_dump())
-    else:
+        # 克隆共享聊天
+        cloned_chat = Chats.clone_shared_chat(id, user.id)
+        return ChatResponse(**cloned_chat.model_dump())
+    except Exception as e:
+        log.exception(e)
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.DEFAULT()
+            status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
         )
 
 
@@ -653,27 +984,42 @@ async def clone_shared_chat_by_id(id: str, user=Depends(get_verified_user)):
 
 @router.post("/{id}/archive", response_model=Optional[ChatResponse])
 async def archive_chat_by_id(id: str, user=Depends(get_verified_user)):
-    chat = Chats.get_chat_by_id_and_user_id(id, user.id)
-    if chat:
-        chat = Chats.toggle_chat_archive_by_id(id)
-
-        # Delete tags if chat is archived
-        if chat.archived:
-            for tag_id in chat.meta.get("tags", []):
-                if Chats.count_chats_by_tag_name_and_user_id(tag_id, user.id) == 0:
-                    log.debug(f"deleting tag: {tag_id}")
-                    Tags.delete_tag_by_name_and_user_id(tag_id, user.id)
-        else:
-            for tag_id in chat.meta.get("tags", []):
-                tag = Tags.get_tag_by_name_and_user_id(tag_id, user.id)
-                if tag is None:
-                    log.debug(f"inserting tag: {tag_id}")
-                    tag = Tags.insert_new_tag(tag_id, user.id)
-
+    """
+    归档或取消归档聊天
+    
+    切换聊天的归档状态
+    
+    参数:
+        id: 聊天ID
+        user: 已验证的用户
+        
+    返回:
+        ChatResponse: 更新后的聊天信息
+        
+    异常:
+        HTTPException: 如果找不到聊天或操作失败
+    """
+    try:
+        chat = Chats.toggle_archive_chat_by_id_and_user_id(id, user.id)
+        
+        # 发送归档状态变更事件
+        event_emitter = get_event_emitter()
+        if event_emitter:
+            event_emitter.emit(
+                {
+                    "event": "chat:archive:toggle",
+                    "type": "chat",
+                    "id": id,
+                    "archived": chat.is_archived,
+                },
+                user_id=user.id,
+            )
+            
         return ChatResponse(**chat.model_dump())
-    else:
+    except Exception as e:
+        log.exception(e)
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.DEFAULT()
+            status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
         )
 
 
@@ -684,7 +1030,24 @@ async def archive_chat_by_id(id: str, user=Depends(get_verified_user)):
 
 @router.post("/{id}/share", response_model=Optional[ChatResponse])
 async def share_chat_by_id(request: Request, id: str, user=Depends(get_verified_user)):
-    if not has_permission(
+    """
+    共享聊天
+    
+    生成共享链接或取消共享
+    
+    参数:
+        request: FastAPI请求对象
+        id: 聊天ID
+        user: 已验证的用户
+        
+    返回:
+        ChatResponse: 更新后的聊天信息
+        
+    异常:
+        HTTPException: 如果找不到聊天或用户没有共享权限
+    """
+    # 检查用户权限
+    if user.role == "user" and not has_permission(
         user.id, "chat.share", request.app.state.config.USER_PERMISSIONS
     ):
         raise HTTPException(
@@ -694,46 +1057,56 @@ async def share_chat_by_id(request: Request, id: str, user=Depends(get_verified_
 
     chat = Chats.get_chat_by_id_and_user_id(id, user.id)
 
-    if chat:
-        if chat.share_id:
-            shared_chat = Chats.update_shared_chat_by_chat_id(chat.id)
-            return ChatResponse(**shared_chat.model_dump())
-
-        shared_chat = Chats.insert_shared_chat_by_chat_id(chat.id)
-        if not shared_chat:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=ERROR_MESSAGES.DEFAULT(),
-            )
-        return ChatResponse(**shared_chat.model_dump())
-
-    else:
+    if not chat:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+            status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
+        )
+
+    try:
+        chat = Chats.toggle_share_chat_by_id(id)
+        return ChatResponse(**chat.model_dump())
+    except Exception as e:
+        log.exception(e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT()
         )
 
 
 ############################
-# DeletedSharedChatById
+# DeleteSharedChatById
 ############################
 
 
 @router.delete("/{id}/share", response_model=Optional[bool])
 async def delete_shared_chat_by_id(id: str, user=Depends(get_verified_user)):
+    """
+    删除共享聊天
+    
+    取消聊天的共享状态
+    
+    参数:
+        id: 聊天ID
+        user: 已验证的用户
+        
+    返回:
+        bool: 操作是否成功
+        
+    异常:
+        HTTPException: 如果找不到聊天或操作失败
+    """
     chat = Chats.get_chat_by_id_and_user_id(id, user.id)
-    if chat:
-        if not chat.share_id:
-            return False
 
-        result = Chats.delete_shared_chat_by_chat_id(id)
-        update_result = Chats.update_chat_share_id_by_id(id, None)
-
-        return result and update_result != None
-    else:
+    if not chat:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+            status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
+        )
+
+    try:
+        return Chats.unshare_chat_by_id(id)
+    except Exception as e:
+        log.exception(e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT()
         )
 
 
@@ -743,6 +1116,9 @@ async def delete_shared_chat_by_id(id: str, user=Depends(get_verified_user)):
 
 
 class ChatFolderIdForm(BaseModel):
+    """
+    聊天文件夹表单模型
+    """
     folder_id: Optional[str] = None
 
 
@@ -750,15 +1126,34 @@ class ChatFolderIdForm(BaseModel):
 async def update_chat_folder_id_by_id(
     id: str, form_data: ChatFolderIdForm, user=Depends(get_verified_user)
 ):
+    """
+    更新聊天所属的文件夹
+    
+    参数:
+        id: 聊天ID
+        form_data: 文件夹表单数据
+        user: 已验证的用户
+        
+    返回:
+        ChatResponse: 更新后的聊天信息
+        
+    异常:
+        HTTPException: 如果找不到聊天或操作失败
+    """
     chat = Chats.get_chat_by_id_and_user_id(id, user.id)
-    if chat:
-        chat = Chats.update_chat_folder_id_by_id_and_user_id(
-            id, user.id, form_data.folder_id
-        )
-        return ChatResponse(**chat.model_dump())
-    else:
+
+    if not chat:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.DEFAULT()
+            status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
+        )
+
+    try:
+        chat = Chats.update_chat_folder_id_by_id(id, form_data.folder_id)
+        return ChatResponse(**chat.model_dump())
+    except Exception as e:
+        log.exception(e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT()
         )
 
 
@@ -769,18 +1164,32 @@ async def update_chat_folder_id_by_id(
 
 @router.get("/{id}/tags", response_model=list[TagModel])
 async def get_chat_tags_by_id(id: str, user=Depends(get_verified_user)):
+    """
+    获取聊天的标签列表
+    
+    参数:
+        id: 聊天ID
+        user: 已验证的用户
+        
+    返回:
+        list[TagModel]: 聊天的标签列表
+        
+    异常:
+        HTTPException: 如果找不到聊天
+    """
     chat = Chats.get_chat_by_id_and_user_id(id, user.id)
-    if chat:
-        tags = chat.meta.get("tags", [])
-        return Tags.get_tags_by_ids_and_user_id(tags, user.id)
-    else:
+
+    if not chat:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND
+            status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
         )
+
+    tags = chat.meta.get("tags", [])
+    return [TagModel(name=tag, id=tag) for tag in tags]
 
 
 ############################
-# AddChatTagById
+# AddTagByIdAndTagName
 ############################
 
 
@@ -788,33 +1197,52 @@ async def get_chat_tags_by_id(id: str, user=Depends(get_verified_user)):
 async def add_tag_by_id_and_tag_name(
     id: str, form_data: TagForm, user=Depends(get_verified_user)
 ):
+    """
+    为聊天添加标签
+    
+    如果标签不存在则自动创建
+    
+    参数:
+        id: 聊天ID
+        form_data: 标签表单数据
+        user: 已验证的用户
+        
+    返回:
+        list[TagModel]: 更新后的标签列表
+        
+    异常:
+        HTTPException: 如果找不到聊天或操作失败
+    """
     chat = Chats.get_chat_by_id_and_user_id(id, user.id)
-    if chat:
-        tags = chat.meta.get("tags", [])
-        tag_id = form_data.name.replace(" ", "_").lower()
 
-        if tag_id == "none":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=ERROR_MESSAGES.DEFAULT("Tag name cannot be 'None'"),
-            )
-
-        if tag_id not in tags:
-            Chats.add_chat_tag_by_id_and_user_id_and_tag_name(
-                id, user.id, form_data.name
-            )
-
-        chat = Chats.get_chat_by_id_and_user_id(id, user.id)
-        tags = chat.meta.get("tags", [])
-        return Tags.get_tags_by_ids_and_user_id(tags, user.id)
-    else:
+    if not chat:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.DEFAULT()
+            status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
+        )
+
+    tag_name = form_data.name.strip()
+    tag_id = tag_name.replace(" ", "_").lower()
+
+    # 检查标签是否存在，不存在则创建
+    if tag_id != "none" and Tags.get_tag_by_name_and_user_id(tag_name, user.id) is None:
+        Tags.insert_new_tag(tag_name, user.id)
+
+    try:
+        # 添加标签到聊天
+        chat = Chats.add_tag_to_chat_by_id(id, tag_id)
+        
+        # 返回更新后的标签列表
+        tags = chat.meta.get("tags", [])
+        return [TagModel(name=tag, id=tag) for tag in tags]
+    except Exception as e:
+        log.exception(e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT()
         )
 
 
 ############################
-# DeleteChatTagById
+# DeleteTagByIdAndTagName
 ############################
 
 
@@ -822,19 +1250,40 @@ async def add_tag_by_id_and_tag_name(
 async def delete_tag_by_id_and_tag_name(
     id: str, form_data: TagForm, user=Depends(get_verified_user)
 ):
+    """
+    从聊天中删除标签
+    
+    参数:
+        id: 聊天ID
+        form_data: 标签表单数据
+        user: 已验证的用户
+        
+    返回:
+        list[TagModel]: 更新后的标签列表
+        
+    异常:
+        HTTPException: 如果找不到聊天或操作失败
+    """
     chat = Chats.get_chat_by_id_and_user_id(id, user.id)
-    if chat:
-        Chats.delete_tag_by_id_and_user_id_and_tag_name(id, user.id, form_data.name)
 
-        if Chats.count_chats_by_tag_name_and_user_id(form_data.name, user.id) == 0:
-            Tags.delete_tag_by_name_and_user_id(form_data.name, user.id)
-
-        chat = Chats.get_chat_by_id_and_user_id(id, user.id)
-        tags = chat.meta.get("tags", [])
-        return Tags.get_tags_by_ids_and_user_id(tags, user.id)
-    else:
+    if not chat:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND
+            status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
+        )
+
+    tag_id = form_data.name.replace(" ", "_").lower()
+
+    try:
+        # 从聊天中移除标签
+        chat = Chats.remove_tag_from_chat_by_id(id, tag_id)
+        
+        # 返回更新后的标签列表
+        tags = chat.meta.get("tags", [])
+        return [TagModel(name=tag, id=tag) for tag in tags]
+    except Exception as e:
+        log.exception(e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT()
         )
 
 
@@ -845,16 +1294,32 @@ async def delete_tag_by_id_and_tag_name(
 
 @router.delete("/{id}/tags/all", response_model=Optional[bool])
 async def delete_all_tags_by_id(id: str, user=Depends(get_verified_user)):
+    """
+    删除聊天的所有标签
+    
+    参数:
+        id: 聊天ID
+        user: 已验证的用户
+        
+    返回:
+        bool: 操作是否成功
+        
+    异常:
+        HTTPException: 如果找不到聊天或操作失败
+    """
     chat = Chats.get_chat_by_id_and_user_id(id, user.id)
-    if chat:
-        Chats.delete_all_tags_by_id_and_user_id(id, user.id)
 
-        for tag in chat.meta.get("tags", []):
-            if Chats.count_chats_by_tag_name_and_user_id(tag, user.id) == 0:
-                Tags.delete_tag_by_name_and_user_id(tag, user.id)
-
-        return True
-    else:
+    if not chat:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND
+            status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND
+        )
+
+    try:
+        # 清除聊天的所有标签
+        chat = Chats.clear_tags_from_chat_by_id(id)
+        return True
+    except Exception as e:
+        log.exception(e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.DEFAULT()
         )

@@ -297,6 +297,18 @@ def load_speech_pipeline(request):
 
 @router.post("/speech")
 async def speech(request: Request, user=Depends(get_verified_user)):
+    """
+    文本转语音端点
+    
+    将文本转换为语音并返回音频文件
+    
+    参数:
+        request: FastAPI请求对象
+        user: 已验证的用户
+        
+    返回:
+        FileResponse: 包含合成语音的音频文件
+    """
     body = await request.body()
     name = hashlib.sha256(
         body
@@ -307,7 +319,7 @@ async def speech(request: Request, user=Depends(get_verified_user)):
     file_path = SPEECH_CACHE_DIR.joinpath(f"{name}.mp3")
     file_body_path = SPEECH_CACHE_DIR.joinpath(f"{name}.json")
 
-    # Check if the file already exists in the cache
+    # 检查缓存中是否已存在文件
     if file_path.is_file():
         return FileResponse(file_path)
 
@@ -316,7 +328,7 @@ async def speech(request: Request, user=Depends(get_verified_user)):
         payload = json.loads(body.decode("utf-8"))
     except Exception as e:
         log.exception(e)
-        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+        raise HTTPException(status_code=400, detail="无效的JSON负载")
 
     if request.app.state.config.TTS_ENGINE == "openai":
         payload["model"] = request.app.state.config.TTS_MODEL
@@ -370,7 +382,7 @@ async def speech(request: Request, user=Depends(get_verified_user)):
 
             raise HTTPException(
                 status_code=getattr(r, "status", 500) if r else 500,
-                detail=detail if detail else "Open WebUI: Server Connection Error",
+                detail=detail if detail else "Open WebUI: 服务器连接错误",
             )
 
     elif request.app.state.config.TTS_ENGINE == "elevenlabs":
@@ -379,7 +391,7 @@ async def speech(request: Request, user=Depends(get_verified_user)):
         if voice_id not in get_available_voices(request):
             raise HTTPException(
                 status_code=400,
-                detail="Invalid voice id",
+                detail="无效的语音ID",
             )
 
         try:
@@ -425,7 +437,7 @@ async def speech(request: Request, user=Depends(get_verified_user)):
 
             raise HTTPException(
                 status_code=getattr(r, "status", 500) if r else 500,
-                detail=detail if detail else "Open WebUI: Server Connection Error",
+                detail=detail if detail else "Open WebUI: 服务器连接错误",
             )
 
     elif request.app.state.config.TTS_ENGINE == "azure":
@@ -433,7 +445,7 @@ async def speech(request: Request, user=Depends(get_verified_user)):
             payload = json.loads(body.decode("utf-8"))
         except Exception as e:
             log.exception(e)
-            raise HTTPException(status_code=400, detail="Invalid JSON payload")
+            raise HTTPException(status_code=400, detail="无效的JSON负载")
 
         region = request.app.state.config.TTS_AZURE_SPEECH_REGION or "eastus"
         base_url = request.app.state.config.TTS_AZURE_SPEECH_BASE_URL
@@ -484,7 +496,7 @@ async def speech(request: Request, user=Depends(get_verified_user)):
 
             raise HTTPException(
                 status_code=getattr(r, "status", 500) if r else 500,
-                detail=detail if detail else "Open WebUI: Server Connection Error",
+                detail=detail if detail else "Open WebUI: 服务器连接错误",
             )
 
     elif request.app.state.config.TTS_ENGINE == "transformers":
@@ -493,7 +505,7 @@ async def speech(request: Request, user=Depends(get_verified_user)):
             payload = json.loads(body.decode("utf-8"))
         except Exception as e:
             log.exception(e)
-            raise HTTPException(status_code=400, detail="Invalid JSON payload")
+            raise HTTPException(status_code=400, detail="无效的JSON负载")
 
         import torch
         import soundfile as sf
@@ -528,6 +540,19 @@ async def speech(request: Request, user=Depends(get_verified_user)):
 
 
 def transcription_handler(request, file_path, metadata):
+    """
+    处理语音转文本的核心函数
+    
+    根据配置的引擎选择不同的转录处理方式
+    
+    参数:
+        request: FastAPI请求对象
+        file_path: 音频文件路径
+        metadata: 附加元数据
+        
+    返回:
+        dict: 包含转录文本的字典
+    """
     filename = os.path.basename(file_path)
     file_dir = os.path.dirname(file_path)
     id = filename.split(".")[0]
@@ -548,14 +573,14 @@ def transcription_handler(request, file_path, metadata):
             language=metadata.get("language") or WHISPER_LANGUAGE,
         )
         log.info(
-            "Detected language '%s' with probability %f"
+            "检测到语言 '%s' 的概率为 %f"
             % (info.language, info.language_probability)
         )
 
         transcript = "".join([segment.text for segment in list(segments)])
         data = {"text": transcript.strip()}
 
-        # save the transcript to a json file
+        # 将转录保存到json文件
         transcript_file = f"{file_dir}/{id}.json"
         with open(transcript_file, "w") as f:
             json.dump(data, f)
@@ -584,7 +609,7 @@ def transcription_handler(request, file_path, metadata):
             r.raise_for_status()
             data = r.json()
 
-            # save the transcript to a json file
+            # 将转录保存到json文件
             transcript_file = f"{file_dir}/{id}.json"
             with open(transcript_file, "w") as f:
                 json.dump(data, f)
@@ -602,31 +627,31 @@ def transcription_handler(request, file_path, metadata):
                 except Exception:
                     detail = f"External: {e}"
 
-            raise Exception(detail if detail else "Open WebUI: Server Connection Error")
+            raise Exception(detail if detail else "Open WebUI: 服务器连接错误")
 
     elif request.app.state.config.STT_ENGINE == "deepgram":
         try:
-            # Determine the MIME type of the file
+            # 确定文件的MIME类型
             mime, _ = mimetypes.guess_type(file_path)
             if not mime:
-                mime = "audio/wav"  # fallback to wav if undetectable
+                mime = "audio/wav"  # 如果无法检测则默认为wav
 
-            # Read the audio file
+            # 读取音频文件
             with open(file_path, "rb") as f:
                 file_data = f.read()
 
-            # Build headers and parameters
+            # 构建头部和参数
             headers = {
                 "Authorization": f"Token {request.app.state.config.DEEPGRAM_API_KEY}",
                 "Content-Type": mime,
             }
 
-            # Add model if specified
+            # 如果指定了模型，则添加模型参数
             params = {}
             if request.app.state.config.STT_MODEL:
                 params["model"] = request.app.state.config.STT_MODEL
 
-            # Make request to Deepgram API
+            # 向Deepgram API发出请求
             r = requests.post(
                 "https://api.deepgram.com/v1/listen",
                 headers=headers,
@@ -636,19 +661,19 @@ def transcription_handler(request, file_path, metadata):
             r.raise_for_status()
             response_data = r.json()
 
-            # Extract transcript from Deepgram response
+            # 从Deepgram响应中提取转录
             try:
                 transcript = response_data["results"]["channels"][0]["alternatives"][
                     0
                 ].get("transcript", "")
             except (KeyError, IndexError) as e:
-                log.error(f"Malformed response from Deepgram: {str(e)}")
+                log.error(f"Deepgram响应格式错误: {str(e)}")
                 raise Exception(
-                    "Failed to parse Deepgram response - unexpected response format"
+                    "无法解析Deepgram响应 - 响应格式异常"
                 )
             data = {"text": transcript.strip()}
 
-            # Save transcript
+            # 保存转录
             transcript_file = f"{file_dir}/{id}.json"
             with open(transcript_file, "w") as f:
                 json.dump(data, f)
@@ -665,19 +690,19 @@ def transcription_handler(request, file_path, metadata):
                         detail = f"External: {res['error'].get('message', '')}"
                 except Exception:
                     detail = f"External: {e}"
-            raise Exception(detail if detail else "Open WebUI: Server Connection Error")
+            raise Exception(detail if detail else "Open WebUI: 服务器连接错误")
 
     elif request.app.state.config.STT_ENGINE == "azure":
-        # Check file exists and size
+        # 检查文件是否存在和大小
         if not os.path.exists(file_path):
-            raise HTTPException(status_code=400, detail="Audio file not found")
+            raise HTTPException(status_code=400, detail="未找到音频文件")
 
-        # Check file size (Azure has a larger limit of 200MB)
+        # 检查文件大小（Azure的限制为200MB）
         file_size = os.path.getsize(file_path)
         if file_size > AZURE_MAX_FILE_SIZE:
             raise HTTPException(
                 status_code=400,
-                detail=f"File size exceeds Azure's limit of {AZURE_MAX_FILE_SIZE_MB}MB",
+                detail=f"文件大小超过Azure的限制{AZURE_MAX_FILE_SIZE_MB}MB"
             )
 
         api_key = request.app.state.config.AUDIO_STT_AZURE_API_KEY
@@ -686,7 +711,7 @@ def transcription_handler(request, file_path, metadata):
         base_url = request.app.state.config.AUDIO_STT_AZURE_BASE_URL
         max_speakers = request.app.state.config.AUDIO_STT_AZURE_MAX_SPEAKERS or 3
 
-        # IF NO LOCALES, USE DEFAULTS
+        # 如果没有语言区域设置，使用默认值
         if len(locales) < 2:
             locales = [
                 "en-US",
@@ -708,12 +733,12 @@ def transcription_handler(request, file_path, metadata):
         if not api_key or not region:
             raise HTTPException(
                 status_code=400,
-                detail="Azure API key is required for Azure STT",
+                detail="Azure语音转文本需要Azure API密钥",
             )
 
         r = None
         try:
-            # Prepare the request
+            # 准备请求
             data = {
                 "definition": json.dumps(
                     {
@@ -729,7 +754,7 @@ def transcription_handler(request, file_path, metadata):
                 base_url or f"https://{region}.api.cognitive.microsoft.com"
             ) + "/speechtotext/transcriptions:transcribe?api-version=2024-11-15"
 
-            # Use context manager to ensure file is properly closed
+            # 使用上下文管理器确保文件正确关闭
             with open(file_path, "rb") as audio_file:
                 r = requests.post(
                     url=url,
@@ -743,18 +768,18 @@ def transcription_handler(request, file_path, metadata):
             r.raise_for_status()
             response = r.json()
 
-            # Extract transcript from response
+            # 从响应中提取转录
             if not response.get("combinedPhrases"):
-                raise ValueError("No transcription found in response")
+                raise ValueError("响应中未找到转录")
 
-            # Get the full transcript from combinedPhrases
+            # 从combinedPhrases获取完整转录
             transcript = response["combinedPhrases"][0].get("text", "").strip()
             if not transcript:
-                raise ValueError("Empty transcript in response")
+                raise ValueError("响应中的转录为空")
 
             data = {"text": transcript}
 
-            # Save transcript to json file (consistent with other providers)
+            # 将转录保存到json文件（与其他提供者一致）
             transcript_file = f"{file_dir}/{id}.json"
             with open(transcript_file, "w") as f:
                 json.dump(data, f)
@@ -763,10 +788,10 @@ def transcription_handler(request, file_path, metadata):
             return data
 
         except (KeyError, IndexError, ValueError) as e:
-            log.exception("Error parsing Azure response")
+            log.exception("解析Azure响应时出错")
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to parse Azure response: {str(e)}",
+                detail=f"无法解析Azure响应: {str(e)}",
             )
         except requests.exceptions.RequestException as e:
             log.exception(e)
@@ -782,7 +807,7 @@ def transcription_handler(request, file_path, metadata):
 
             raise HTTPException(
                 status_code=getattr(r, "status_code", 500) if r else 500,
-                detail=detail if detail else "Open WebUI: Server Connection Error",
+                detail=detail if detail else "Open WebUI: 服务器连接错误",
             )
 
 
@@ -901,66 +926,99 @@ def split_audio(file_path, max_bytes, format="mp3", bitrate="32k"):
     return chunks
 
 
-@router.post("/transcriptions")
-def transcription(
+@router.post("/transcription")
+async def transcription(
     request: Request,
     file: UploadFile = File(...),
     language: Optional[str] = Form(None),
     user=Depends(get_verified_user),
 ):
-    log.info(f"file.content_type: {file.content_type}")
-
-    SUPPORTED_CONTENT_TYPES = {"video/webm"}  # Extend if you add more video types!
-    if not (
-        file.content_type.startswith("audio/")
-        or file.content_type in SUPPORTED_CONTENT_TYPES
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ERROR_MESSAGES.FILE_NOT_SUPPORTED,
-        )
-
-    try:
-        ext = file.filename.split(".")[-1]
-        id = uuid.uuid4()
-
-        filename = f"{id}.{ext}"
-        contents = file.file.read()
-
-        file_dir = f"{CACHE_DIR}/audio/transcriptions"
-        os.makedirs(file_dir, exist_ok=True)
-        file_path = f"{file_dir}/{filename}"
-
-        with open(file_path, "wb") as f:
-            f.write(contents)
-
-        try:
-            metadata = None
-
-            if language:
-                metadata = {"language": language}
-
-            result = transcribe(request, file_path, metadata)
-
-            return {
-                **result,
-                "filename": os.path.basename(file_path),
-            }
-
-        except Exception as e:
-            log.exception(e)
-
+    """
+    语音转文本端点
+    
+    将上传的音频文件转换为文本
+    
+    参数:
+        request: FastAPI请求对象
+        file: 上传的音频文件
+        language: 可选的语言代码
+        user: 已验证的用户
+        
+    返回:
+        dict: 包含转录文本的字典
+    """
+    # 检查文件大小
+    file_size = 0
+    chunk_size = 1024 * 1024  # 1MB
+    while chunk := await file.read(chunk_size):
+        file_size += len(chunk)
+        # 如果文件大小超过限制，则中断并抛出异常
+        if file_size > MAX_FILE_SIZE:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=ERROR_MESSAGES.DEFAULT(e),
+                status_code=413,
+                detail=f"文件大小超过限制{MAX_FILE_SIZE_MB}MB",
             )
 
+    # 重置文件指针
+    await file.seek(0)
+
+    # 创建唯一的文件名
+    unique_id = str(uuid.uuid4())
+    temp_file = f"/tmp/{unique_id}{os.path.splitext(file.filename)[1]}"
+
+    # 保存上传的文件
+    with open(temp_file, "wb") as f:
+        while chunk := await file.read(chunk_size):
+            f.write(chunk)
+
+    # 检查是否需要转换音频格式
+    if is_audio_conversion_required(temp_file):
+        log.info(f"转换音频文件 {temp_file}")
+        converted_file = convert_audio_to_mp3(temp_file)
+        if converted_file:
+            # 如果转换成功，则使用转换后的文件
+            os.remove(temp_file)  # 删除原始文件
+            temp_file = converted_file
+        else:
+            # 如果转换失败，则使用原始文件并记录警告
+            log.warning(f"无法转换音频文件，将使用原始文件: {temp_file}")
+
+    # 添加语言到元数据（如果提供了）
+    metadata = None
+    if language:
+        metadata = {"language": language}
+
+    # 处理转录
+    try:
+        # 使用ThreadPoolExecutor来处理转录以避免阻塞
+        with ThreadPoolExecutor() as executor:
+            # 将转录处理提交到执行器并获取结果
+            data = executor.submit(
+                transcription_handler, request, temp_file, metadata
+            ).result()
+
+        # 处理完成后删除临时文件
+        try:
+            os.remove(temp_file)
+        except:
+            log.exception(f"删除临时文件时出错: {temp_file}")
+
+        return data
     except Exception as e:
-        log.exception(e)
+        log.exception(f"转录处理时出错: {e}")
+
+        # 尝试删除临时文件
+        try:
+            os.remove(temp_file)
+        except:
+            log.exception(f"删除临时文件时出错: {temp_file}")
+
+        if isinstance(e, HTTPException):
+            raise e
 
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ERROR_MESSAGES.DEFAULT(e),
+            status_code=500,
+            detail=str(e) if str(e) else ERROR_MESSAGES.SERVER_ERROR.value,
         )
 
 
@@ -1009,111 +1067,199 @@ async def get_models(request: Request, user=Depends(get_verified_user)):
     return {"models": get_available_models(request)}
 
 
-def get_available_voices(request) -> dict:
-    """Returns {voice_id: voice_name} dict"""
-    available_voices = {}
-    if request.app.state.config.TTS_ENGINE == "openai":
-        # Use custom endpoint if not using the official OpenAI API URL
-        if not request.app.state.config.TTS_OPENAI_API_BASE_URL.startswith(
-            "https://api.openai.com"
-        ):
-            try:
-                response = requests.get(
-                    f"{request.app.state.config.TTS_OPENAI_API_BASE_URL}/audio/voices"
-                )
-                response.raise_for_status()
-                data = response.json()
-                voices_list = data.get("voices", [])
-                available_voices = {voice["id"]: voice["name"] for voice in voices_list}
-            except Exception as e:
-                log.error(f"Error fetching voices from custom endpoint: {str(e)}")
-                available_voices = {
-                    "alloy": "alloy",
-                    "echo": "echo",
-                    "fable": "fable",
-                    "onyx": "onyx",
-                    "nova": "nova",
-                    "shimmer": "shimmer",
-                }
-        else:
-            available_voices = {
-                "alloy": "alloy",
-                "echo": "echo",
-                "fable": "fable",
-                "onyx": "onyx",
-                "nova": "nova",
-                "shimmer": "shimmer",
-            }
-    elif request.app.state.config.TTS_ENGINE == "elevenlabs":
-        try:
-            available_voices = get_elevenlabs_voices(
-                api_key=request.app.state.config.TTS_API_KEY
-            )
-        except Exception:
-            # Avoided @lru_cache with exception
-            pass
-    elif request.app.state.config.TTS_ENGINE == "azure":
-        try:
-            region = request.app.state.config.TTS_AZURE_SPEECH_REGION
-            base_url = request.app.state.config.TTS_AZURE_SPEECH_BASE_URL
-            url = (
-                base_url or f"https://{region}.tts.speech.microsoft.com"
-            ) + "/cognitiveservices/voices/list"
-            headers = {
-                "Ocp-Apim-Subscription-Key": request.app.state.config.TTS_API_KEY
-            }
-
-            response = requests.get(url, headers=headers)
-            response.raise_for_status()
-            voices = response.json()
-
-            for voice in voices:
-                available_voices[voice["ShortName"]] = (
-                    f"{voice['DisplayName']} ({voice['ShortName']})"
-                )
-        except requests.RequestException as e:
-            log.error(f"Error fetching voices: {str(e)}")
-
-    return available_voices
-
-
 @lru_cache
-def get_elevenlabs_voices(api_key: str) -> dict:
+def get_available_voices(request: Request):
     """
-    Note, set the following in your .env file to use Elevenlabs:
-    AUDIO_TTS_ENGINE=elevenlabs
-    AUDIO_TTS_API_KEY=sk_...  # Your Elevenlabs API key
-    AUDIO_TTS_VOICE=EXAVITQu4vr4xnSDxMaL  # From https://api.elevenlabs.io/v1/voices
-    AUDIO_TTS_MODEL=eleven_multilingual_v2
+    获取可用的语音列表（缓存结果）
+    
+    参数:
+        request: FastAPI请求对象
+        
+    返回:
+        list: 可用语音ID列表
     """
+    if request.app.state.config.TTS_ENGINE == "elevenlabs":
+        try:
+            r = requests.get(
+                "https://api.elevenlabs.io/v1/voices",
+                headers={"xi-api-key": request.app.state.config.TTS_API_KEY},
+            )
+            r.raise_for_status()
+            json_data = r.json()
+            return [voice.get("voice_id") for voice in json_data.get("voices", [])]
+        except Exception as e:
+            log.exception(e)
+            return []
 
-    try:
-        # TODO: Add retries
-        response = requests.get(
-            "https://api.elevenlabs.io/v1/voices",
-            headers={
-                "xi-api-key": api_key,
-                "Content-Type": "application/json",
-            },
-        )
-        response.raise_for_status()
-        voices_data = response.json()
+    elif request.app.state.config.TTS_ENGINE == "transformers":
+        from datasets import load_dataset
 
-        voices = {}
-        for voice in voices_data.get("voices", []):
-            voices[voice["voice_id"]] = voice["name"]
-    except requests.RequestException as e:
-        # Avoid @lru_cache with exception
-        log.error(f"Error fetching voices: {str(e)}")
-        raise RuntimeError(f"Error fetching voices: {str(e)}")
+        try:
+            embeddings_dataset = load_dataset(
+                "Matthijs/cmu-arctic-xvectors", split="validation"
+            )
+            return embeddings_dataset["filename"]
+        except Exception as e:
+            log.exception(e)
+            return []
 
-    return voices
+    return []
 
 
 @router.get("/voices")
 async def get_voices(request: Request, user=Depends(get_verified_user)):
-    return {
-        "voices": [
-            {"id": k, "name": v} for k, v in get_available_voices(request).items()
+    """
+    获取可用的语音列表
+    
+    参数:
+        request: FastAPI请求对象
+        user: 已验证的用户
+        
+    返回:
+        list: 可用的语音列表
+    """
+    voices = []
+
+    if request.app.state.config.TTS_ENGINE == "elevenlabs":
+        try:
+            r = requests.get(
+                "https://api.elevenlabs.io/v1/voices",
+                headers={"xi-api-key": request.app.state.config.TTS_API_KEY},
+            )
+            r.raise_for_status()
+            json_data = r.json()
+            return [
+                {
+                    "id": voice.get("voice_id"),
+                    "name": voice.get("name"),
+                    "category": voice.get("category"),
+                    "preview_url": voice.get("preview_url"),
+                }
+                for voice in json_data.get("voices", [])
+            ]
+        except Exception as e:
+            log.exception(e)
+            return []
+
+    elif request.app.state.config.TTS_ENGINE == "transformers":
+        from datasets import load_dataset
+
+        try:
+            embeddings_dataset = load_dataset(
+                "Matthijs/cmu-arctic-xvectors", split="validation"
+            )
+            return [
+                {
+                    "id": filename,
+                    "name": filename,
+                }
+                for filename in embeddings_dataset["filename"]
+            ]
+        except Exception as e:
+            log.exception(e)
+            return []
+
+    elif request.app.state.config.TTS_ENGINE == "openai":
+        return [
+            {"id": "alloy", "name": "Alloy"},
+            {"id": "echo", "name": "Echo"},
+            {"id": "fable", "name": "Fable"},
+            {"id": "onyx", "name": "Onyx"},
+            {"id": "nova", "name": "Nova"},
+            {"id": "shimmer", "name": "Shimmer"},
         ]
-    }
+
+    elif request.app.state.config.TTS_ENGINE == "azure":
+        voices = []
+        languages = [
+            {"code": "en-US", "name": "English (United States)"},
+            {"code": "zh-CN", "name": "Chinese (Simplified)"},
+            {"code": "zh-TW", "name": "Chinese (Traditional)"},
+            {"code": "fr-FR", "name": "French (France)"},
+            {"code": "de-DE", "name": "German (Germany)"},
+            {"code": "it-IT", "name": "Italian (Italy)"},
+            {"code": "ja-JP", "name": "Japanese (Japan)"},
+            {"code": "ko-KR", "name": "Korean (Korea)"},
+            {"code": "pt-BR", "name": "Portuguese (Brazil)"},
+            {"code": "ru-RU", "name": "Russian (Russia)"},
+            {"code": "es-ES", "name": "Spanish (Spain)"},
+        ]
+
+        azure_voices = {
+            "en-US": [
+                {"name": "en-US-JennyNeural", "gender": "Female"},
+                {"name": "en-US-GuyNeural", "gender": "Male"},
+                {"name": "en-US-AriaNeural", "gender": "Female"},
+                {"name": "en-US-DavisNeural", "gender": "Male"},
+            ],
+            "zh-CN": [
+                {"name": "zh-CN-XiaomoNeural", "gender": "Female"},
+                {"name": "zh-CN-XiaoxuanNeural", "gender": "Female"},
+                {"name": "zh-CN-YunjianNeural", "gender": "Male"},
+                {"name": "zh-CN-YunyangNeural", "gender": "Male"},
+            ],
+            "zh-TW": [
+                {"name": "zh-TW-HsiaoChenNeural", "gender": "Female"},
+                {"name": "zh-TW-YunJheNeural", "gender": "Male"},
+                {"name": "zh-TW-HsiaoYuNeural", "gender": "Female"},
+            ],
+            "fr-FR": [
+                {"name": "fr-FR-DeniseNeural", "gender": "Female"},
+                {"name": "fr-FR-HenriNeural", "gender": "Male"},
+                {"name": "fr-FR-AlainNeural", "gender": "Male"},
+            ],
+            "de-DE": [
+                {"name": "de-DE-KatjaNeural", "gender": "Female"},
+                {"name": "de-DE-ConradNeural", "gender": "Male"},
+                {"name": "de-DE-AmalaNeural", "gender": "Female"},
+            ],
+            "it-IT": [
+                {"name": "it-IT-ElsaNeural", "gender": "Female"},
+                {"name": "it-IT-DiegoNeural", "gender": "Male"},
+                {"name": "it-IT-IsabellaNeural", "gender": "Female"},
+            ],
+            "ja-JP": [
+                {"name": "ja-JP-NanamiNeural", "gender": "Female"},
+                {"name": "ja-JP-KeitaNeural", "gender": "Male"},
+                {"name": "ja-JP-AoiNeural", "gender": "Female"},
+            ],
+            "ko-KR": [
+                {"name": "ko-KR-SunHiNeural", "gender": "Female"},
+                {"name": "ko-KR-InJoonNeural", "gender": "Male"},
+                {"name": "ko-KR-JiMinNeural", "gender": "Female"},
+            ],
+            "pt-BR": [
+                {"name": "pt-BR-FranciscaNeural", "gender": "Female"},
+                {"name": "pt-BR-AntonioNeural", "gender": "Male"},
+                {"name": "pt-BR-BrendaNeural", "gender": "Female"},
+            ],
+            "ru-RU": [
+                {"name": "ru-RU-SvetlanaNeural", "gender": "Female"},
+                {"name": "ru-RU-DmitryNeural", "gender": "Male"},
+                {"name": "ru-RU-DariyaNeural", "gender": "Female"},
+            ],
+            "es-ES": [
+                {"name": "es-ES-ElviraNeural", "gender": "Female"},
+                {"name": "es-ES-AlvaroNeural", "gender": "Male"},
+                {"name": "es-ES-AbrilNeural", "gender": "Female"},
+            ],
+        }
+
+        for language in languages:
+            language_code = language["code"]
+            language_name = language["name"]
+
+            if language_code in azure_voices:
+                for voice in azure_voices[language_code]:
+                    voices.append(
+                        {
+                            "id": voice["name"],
+                            "name": voice["name"],
+                            "gender": voice["gender"],
+                            "language": language_name,
+                        }
+                    )
+
+        return voices
+
+    return voices

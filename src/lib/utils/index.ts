@@ -7,6 +7,7 @@ import isToday from 'dayjs/plugin/isToday';
 import isYesterday from 'dayjs/plugin/isYesterday';
 import localizedFormat from 'dayjs/plugin/localizedFormat';
 
+// 扩展dayjs功能，添加相对时间、日期判断和本地化格式
 dayjs.extend(relativeTime);
 dayjs.extend(isToday);
 dayjs.extend(isYesterday);
@@ -24,12 +25,40 @@ import hljs from 'highlight.js';
 // Helper functions
 //////////////////////////
 
+/**
+ * 异步延迟函数
+ * 
+ * 创建一个指定毫秒数的延迟Promise
+ * 
+ * @param ms - 延迟的毫秒数
+ * @returns 延迟指定时间后解决的Promise
+ */
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * 转义正则表达式特殊字符
+ * 
+ * 在正则表达式模式中使用前，处理字符串中的特殊字符
+ * 
+ * @param string - 需要转义的字符串
+ * @returns 转义后的字符串
+ */
 function escapeRegExp(string: string): string {
 	return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * 替换消息内容中的模板标记
+ * 
+ * 将消息内容中的模板标记(如{{char}}、{{user}})替换为实际值
+ * 并处理特殊的文件引用标记
+ * 
+ * @param content - 包含模板标记的原始内容
+ * @param sourceIds - 引用来源ID数组
+ * @param char - 角色名称
+ * @param user - 用户名称
+ * @returns 替换标记后的内容
+ */
 export const replaceTokens = (content, sourceIds, char, user) => {
 	const tokens = [
 		{ regex: /{{char}}/gi, replacement: char },
@@ -45,7 +74,7 @@ export const replaceTokens = (content, sourceIds, char, user) => {
 		}
 	];
 
-	// Replace tokens outside code blocks only
+	// 仅在代码块外部替换标记
 	const processOutsideCodeBlocks = (text, replacementFn) => {
 		return text
 			.split(/(```[\s\S]*?```|`[\s\S]*?`)/)
@@ -57,7 +86,7 @@ export const replaceTokens = (content, sourceIds, char, user) => {
 			.join('');
 	};
 
-	// Apply replacements
+	// 应用替换
 	content = processOutsideCodeBlocks(content, (segment) => {
 		tokens.forEach(({ regex, replacement }) => {
 			if (replacement !== undefined && replacement !== null) {
@@ -78,6 +107,15 @@ export const replaceTokens = (content, sourceIds, char, user) => {
 	return content;
 };
 
+/**
+ * 清理AI响应内容
+ * 
+ * 删除响应内容中的特殊标记和控制字符，
+ * 并对HTML敏感字符进行转义
+ * 
+ * @param content - AI的原始响应内容
+ * @returns 清理后的响应内容
+ */
 export const sanitizeResponseContent = (content: string) => {
 	return content
 		.replace(/<\|[a-z]*$/, '')
@@ -89,34 +127,54 @@ export const sanitizeResponseContent = (content: string) => {
 		.trim();
 };
 
+/**
+ * 处理响应内容
+ * 
+ * 对AI响应内容进行处理，包括中文内容特殊处理
+ * 
+ * @param content - AI的原始响应内容
+ * @returns 处理后的响应内容
+ */
 export const processResponseContent = (content: string) => {
 	content = processChineseContent(content);
 	return content.trim();
 };
 
+/**
+ * 检查字符是否为中文字符
+ * 
+ * @param char - 要检查的字符
+ * @returns 是否为中文字符
+ */
 function isChineseChar(char: string): boolean {
 	return /\p{Script=Han}/u.test(char);
 }
 
-// Tackle "Model output issue not following the standard Markdown/LaTeX format" in Chinese.
+/**
+ * 处理中文内容中的Markdown格式问题
+ * 
+ * 解决AI输出中，中文Markdown格式无法正确解析的问题。
+ * 主要处理以下情况：
+ * 1. 当Markdown的强调符号(如*和**)与中文标点(如中文括号"（）"或引号"""")结合时，
+ *    标准的Markdown解析器会忽略强调效果
+ * 2. 例如：`**中文名（English）**中文内容` 会被直接解析，
+ *    而不是解析为 `<strong>中文名（English）</strong>中文内容`
+ * 
+ * 解决方案：
+ * - a. 在强调部分前后添加空格，如：`**中文名（English）**中文内容` → ` **中文名（English）** 中文内容`
+ * - b. 这样处理后，Markdown解析器可以正确识别强调效果
+ * 
+ * 注意：类似问题也出现在英文括号和其他全角分隔符上，但由于在LLM输出中出现概率较低，
+ * 此处未处理。如有需要，未来可扩展此功能。
+ * 
+ * @param content - 原始内容
+ * @returns 处理后的内容
+ */
 function processChineseContent(content: string): string {
-	// This function is used to process the response content before the response content is rendered.
 	const lines = content.split('\n');
 	const processedLines = lines.map((line) => {
 		if (/[\u4e00-\u9fa5]/.test(line)) {
-			// Problems caused by Chinese parentheses
-			/* Discription:
-			 *   When `*` has Chinese delimiters on the inside, markdown parser ignore bold or italic style.
-			 *   - e.g. `**中文名（English）**中文内容` will be parsed directly,
-			 *          instead of `<strong>中文名（English）</strong>中文内容`.
-			 * Solution:
-			 *   Adding a `space` before and after the bold/italic part can solve the problem.
-			 *   - e.g. `**中文名（English）**中文内容` -> ` **中文名（English）** 中文内容`
-			 * Note:
-			 *   Similar problem was found with English parentheses and other full delimiters,
-			 *   but they are not handled here because they are less likely to appear in LLM output.
-			 *   Change the behavior in future if needed.
-			 */
+			// 处理中文括号引起的问题
 			if (line.includes('*')) {
 				// Handle **bold** and *italic*
 				// 1. With Chinese parentheses
@@ -125,9 +183,9 @@ function processChineseContent(content: string): string {
 					line = processChineseDelimiters(line, '*', '（', '）');
 				}
 				// 2. With Chinese quotations
-				if (/“|”/.test(line)) {
-					line = processChineseDelimiters(line, '**', '“', '”');
-					line = processChineseDelimiters(line, '*', '“', '”');
+				if (/"|"/.test(line)) {
+					line = processChineseDelimiters(line, '**', '"', '"');
+					line = processChineseDelimiters(line, '*', '"', '"');
 				}
 			}
 		}
@@ -138,27 +196,43 @@ function processChineseContent(content: string): string {
 	return content;
 }
 
-// Helper function for `processChineseContent`
+/**
+ * 处理中文内容中的特殊分隔符
+ * 
+ * 用于辅助processChineseContent函数，处理Markdown强调符号和中文分隔符的组合问题
+ * 
+ * @param line - 要处理的文本行
+ * @param symbol - Markdown强调符号，如'*'或'**'
+ * @param leftSymbol - 左分隔符，如'（'或'"'
+ * @param rightSymbol - 右分隔符，如'）'或'"'
+ * @returns 处理后的文本行
+ */
 function processChineseDelimiters(
 	line: string,
 	symbol: string,
 	leftSymbol: string,
 	rightSymbol: string
 ): string {
-	// NOTE: If needed, with a little modification, this function can be applied to more cases.
+	// 注意：如果需要，稍作修改，此函数可以应用于更多情况
 	const escapedSymbol = escapeRegExp(symbol);
+	// 创建正则表达式，匹配被强调符号包围的内容
 	const regex = new RegExp(
 		`(.?)(?<!${escapedSymbol})(${escapedSymbol})([^${escapedSymbol}]+)(${escapedSymbol})(?!${escapedSymbol})(.)`,
 		'g'
 	);
 	return line.replace(regex, (match, l, left, content, right, r) => {
+		// 检查是否需要处理：
+		// 1. 如果内容以左分隔符开始，且左边是中文字符，或
+		// 2. 如果内容以右分隔符结束，且右边是中文字符
 		const result =
 			(content.startsWith(leftSymbol) && l && l.length > 0 && isChineseChar(l[l.length - 1])) ||
 			(content.endsWith(rightSymbol) && r && r.length > 0 && isChineseChar(r[0]));
 
 		if (result) {
+			// 在强调部分前后添加空格
 			return `${l} ${left}${content}${right} ${r}`;
 		} else {
+			// 不需要处理，保持原样
 			return match;
 		}
 	});

@@ -44,6 +44,7 @@ from open_webui.env import (
 
 import copy
 
+# 设置日志记录器
 log = logging.getLogger(__name__)
 log.setLevel(SRC_LOG_LEVELS["MODELS"])
 
@@ -51,15 +52,30 @@ log.setLevel(SRC_LOG_LEVELS["MODELS"])
 def get_async_tool_function_and_apply_extra_params(
     function: Callable, extra_params: dict
 ) -> Callable[..., Awaitable]:
+    """
+    将函数转换为异步函数并应用额外参数
+    
+    这个函数接收一个可能是同步或异步的函数，并将其转换为一个应用了额外参数的异步函数。
+    如果原函数已经是异步函数，则直接应用额外参数；如果是同步函数，则包装为异步函数。
+    
+    参数:
+        function: 要转换的函数
+        extra_params: 要应用的额外参数字典
+        
+    返回:
+        一个应用了额外参数的异步函数
+    """
     sig = inspect.signature(function)
+    # 只保留函数签名中存在的参数
     extra_params = {k: v for k, v in extra_params.items() if k in sig.parameters}
     partial_func = partial(function, **extra_params)
 
     if inspect.iscoroutinefunction(function):
+        # 如果已经是协程函数，直接返回
         update_wrapper(partial_func, function)
         return partial_func
     else:
-        # Make it a coroutine function
+        # 将同步函数转换为协程函数
         async def new_function(*args, **kwargs):
             return partial_func(*args, **kwargs)
 
@@ -70,11 +86,28 @@ def get_async_tool_function_and_apply_extra_params(
 def get_tools(
     request: Request, tool_ids: list[str], user: UserModel, extra_params: dict
 ) -> dict[str, dict]:
+    """
+    获取指定工具ID列表对应的工具函数和规格
+    
+    根据提供的工具ID列表，获取对应的工具函数和规格，用于AI函数调用。
+    支持两种类型的工具：本地工具和远程工具服务器工具。
+    
+    参数:
+        request: FastAPI请求对象
+        tool_ids: 工具ID列表
+        user: 用户模型对象
+        extra_params: 要传递给工具函数的额外参数
+        
+    返回:
+        一个字典，键为工具函数名，值为包含工具函数和规格的字典
+    """
     tools_dict = {}
 
     for tool_id in tool_ids:
+        # 尝试从数据库获取工具
         tool = Tools.get_tool_by_id(tool_id)
         if tool is None:
+            # 如果是远程工具服务器工具
             if tool_id.startswith("server:"):
                 server_idx = int(tool_id.split(":")[1])
                 tool_server_connection = (
@@ -99,6 +132,7 @@ def get_tools(
                     elif auth_type == "session":
                         token = request.state.token.credentials
 
+                    # 创建一个闭包函数来捕获函数名和token
                     def make_tool_function(function_name, token, tool_server_data):
                         async def tool_function(**kwargs):
                             print(
@@ -129,7 +163,7 @@ def get_tools(
                         "spec": spec,
                     }
 
-                    # TODO: if collision, prepend toolkit name
+                    # 处理函数名冲突
                     if function_name in tools_dict:
                         log.warning(
                             f"Tool {function_name} already exists in another tools!"
@@ -140,14 +174,17 @@ def get_tools(
             else:
                 continue
         else:
+            # 处理本地工具
             module = request.app.state.TOOLS.get(tool_id, None)
             if module is None:
+                # 如果模块未加载，则加载工具模块
                 module, _ = load_tool_module_by_id(tool_id)
                 request.app.state.TOOLS[tool_id] = module
 
+            # 添加工具ID到额外参数中
             extra_params["__id__"] = tool_id
 
-            # Set valves for the tool
+            # 设置工具的控制阀
             if hasattr(module, "valves") and hasattr(module, "Valves"):
                 valves = Tools.get_tool_valves_by_id(tool_id) or {}
                 module.valves = module.Valves(**valves)
@@ -157,27 +194,26 @@ def get_tools(
                 )
 
             for spec in tool.specs:
-                # TODO: Fix hack for OpenAI API
-                # Some times breaks OpenAI but others don't. Leaving the comment
+                # 修复OpenAI API类型问题
                 for val in spec.get("parameters", {}).get("properties", {}).values():
                     if val.get("type") == "str":
                         val["type"] = "string"
 
-                # Remove internal reserved parameters (e.g. __id__, __user__)
+                # 移除内部保留参数（如 __id__, __user__）
                 spec["parameters"]["properties"] = {
                     key: val
                     for key, val in spec["parameters"]["properties"].items()
                     if not key.startswith("__")
                 }
 
-                # convert to function that takes only model params and inserts custom params
+                # 获取函数并应用额外参数
                 function_name = spec["name"]
                 tool_function = getattr(module, function_name)
                 callable = get_async_tool_function_and_apply_extra_params(
                     tool_function, extra_params
                 )
 
-                # TODO: Support Pydantic models as parameters
+                # 处理函数描述
                 if callable.__doc__ and callable.__doc__.strip() != "":
                     s = re.split(":(param|return)", callable.__doc__, 1)
                     spec["description"] = s[0]
@@ -188,7 +224,7 @@ def get_tools(
                     "tool_id": tool_id,
                     "callable": callable,
                     "spec": spec,
-                    # Misc info
+                    # 其他信息
                     "metadata": {
                         "file_handler": hasattr(module, "file_handler")
                         and module.file_handler,
@@ -196,7 +232,7 @@ def get_tools(
                     },
                 }
 
-                # TODO: if collision, prepend toolkit name
+                # 处理函数名冲突
                 if function_name in tools_dict:
                     log.warning(
                         f"Tool {function_name} already exists in another tools!"
@@ -210,13 +246,15 @@ def get_tools(
 
 def parse_description(docstring: str | None) -> str:
     """
-    Parse a function's docstring to extract the description.
-
-    Args:
-        docstring (str): The docstring to parse.
-
-    Returns:
-        str: The description.
+    解析函数的文档字符串以提取描述信息
+    
+    从函数的文档字符串中提取描述部分，不包括参数和返回值说明。
+    
+    参数:
+        docstring: 要解析的文档字符串
+        
+    返回:
+        提取的描述信息
     """
 
     if not docstring:
@@ -236,13 +274,15 @@ def parse_description(docstring: str | None) -> str:
 
 def parse_docstring(docstring):
     """
-    Parse a function's docstring to extract parameter descriptions in reST format.
-
-    Args:
-        docstring (str): The docstring to parse.
-
-    Returns:
-        dict: A dictionary where keys are parameter names and values are descriptions.
+    解析函数的文档字符串以提取参数描述（reST格式）
+    
+    从函数的文档字符串中提取参数描述，支持reST格式的参数说明。
+    
+    参数:
+        docstring: 要解析的文档字符串
+        
+    返回:
+        一个字典，键为参数名，值为参数描述
     """
     if not docstring:
         return {}

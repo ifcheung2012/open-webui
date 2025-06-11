@@ -1,4 +1,7 @@
-"""Peewee migrations -- 009_add_models.py.
+"""Peewee migrations -- 014_add_files.py.
+
+OpenWebUI 数据库迁移 -- 添加文件管理表。
+此迁移添加了File表，用于存储和管理用户上传的文件信息，支持文件上传和处理功能。
 
 Some examples (model - class or model name)::
 
@@ -35,10 +38,31 @@ with suppress(ImportError):
 
 
 def migrate(migrator: Migrator, database: pw.Database, *, fake=False):
-    """Write your migrations here."""
+    """
+    创建File表的迁移函数。
+    
+    添加File(文件)表，用于存储用户上传文件的元数据信息。
+    这使得系统可以跟踪用户上传的文件，用于对话中的文件引用、知识库文档管理等功能。
+    文件本身存储在文件系统中，表中仅存储元数据信息。
+    
+    参数:
+        migrator: Peewee迁移器对象
+        database: 数据库连接实例
+        fake: 是否模拟迁移而不实际执行
+    """
 
     @migrator.create_model
     class File(pw.Model):
+        """
+        文件表，存储用户上传文件的元数据
+        
+        字段说明:
+        - id: 文件的唯一标识符
+        - user_id: 上传此文件的用户ID
+        - filename: 文件名
+        - meta: 文件元数据，JSON格式存储，包含文件类型、大小等信息
+        - created_at: 上传时间戳
+        """
         id = pw.TextField(unique=True)
         user_id = pw.TextField()
         filename = pw.TextField()
@@ -50,6 +74,16 @@ def migrate(migrator: Migrator, database: pw.Database, *, fake=False):
 
 
 def rollback(migrator: Migrator, database: pw.Database, *, fake=False):
-    """Write your rollback migrations here."""
+    """
+    回滚迁移，删除File表。
+    
+    当需要撤销此迁移时，删除File表。
+    注意：这只会删除文件元数据表，不会删除文件系统中的实际文件。
+    
+    参数:
+        migrator: Peewee迁移器对象
+        database: 数据库连接实例
+        fake: 是否模拟回滚而不实际执行
+    """
 
     migrator.remove_model("file")
